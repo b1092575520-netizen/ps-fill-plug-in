@@ -107,5 +107,5 @@
 ## 2026-08-18 当前恢复阻塞
 
 - `node scripts/check-protected-dirs.cjs` 无法运行：当前恢复副本不包含脚本要求的 `compact-panel-demo` 与 `compact-panel-demo-v2`。可复现：在项目根执行该命令，分别报 `Resolve-Path ...\\compact-panel-demo` 不存在，随后摘要为 `0 files, e3b0c442...`。未修改脚本、未创建伪造目录。
-- 正式目录、phase2、phase4 和 C 盘工作副本均无 `.git`；`git diff --check` 报 `Not a git repository`。未初始化新仓库，避免改变交付边界；需由上游提供 Git 工作树或明确替代的 whitespace 检查方式。
+- Git 阻塞已解除：正式目录已初始化 `main`，恢复快照提交 `6c23cb4`；`git diff --check` 已通过。保护目录仍缺失。
 - Photoshop 真机验收未执行，遵守不关闭、不 Reload/Unload、不操作当前文档的边界；离线构建和测试不替代宿主验收。

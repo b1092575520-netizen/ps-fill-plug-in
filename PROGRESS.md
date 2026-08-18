@@ -8,11 +8,12 @@
 
 ## 2026-08-18 恢复阶段结果
 - 已完成：C 盘临时副本建立；补齐 `uxp-static/manifest.json`；修复 Klein 4B 原生选区路径和历史 UXP CSS 回归。
-- 结构补齐：从 phase2/phase4 内容哈希一致的依赖锁定文件恢复 `package-lock.json`（SHA256 `21824dc9...feb64`）。
+- 结构补齐：从 phase2/phase4 内容哈希一致的依赖锁定文件恢复 `package-lock.json`（SHA256 `21824dc9...feb64`），已同步正式目录并由 `npm ci` 安装 103 个依赖包。
 - 验证：`npm test` 28 文件/259 测试/0 跳过；`npm run typecheck` 退出 0；`npm run build:uxp` 与 `npm run verify:uxp` 退出 0。
 - 产物：`uxp/manifest.json` 672 bytes、`plugin.js` 321549 bytes、`style.css` 35749 bytes，包含经典 IIFE 入口和 V5 权限。
-- 阻塞：`node scripts/check-protected-dirs.cjs` 所需两套保护目录缺失；所有目录无 `.git`，`git diff --check` 无法执行；详见 `BLOCKED.md`。
-- 下一步：等待保护目录/Git 边界裁决；在门禁补齐前不覆盖 `D:\ps fill plug-in`，不宣称 Photoshop 真机验收完成。
+- 阻塞：`node scripts/check-protected-dirs.cjs` 所需两套保护目录缺失；其余正式离线门禁均已通过，详见 `BLOCKED.md`。
+- Git：正式目录已初始化 `main`，恢复快照提交 `6c23cb4`，工作树当前干净。
+- 下一步：补齐/裁决保护目录摘要后重跑该脚本；Photoshop 真机验收仍未执行，不宣称真机完成。
 
 # 后端与 Photoshop 接入进度
 
