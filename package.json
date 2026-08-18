@@ -1,0 +1,30 @@
+{
+  "name": "photoshop-generative-fill-prototype",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "demo": "vite --host 127.0.0.1",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && vite build",
+    "build:uxp": "npm run typecheck && vite build --config vite.uxp.config.ts && npm run verify:uxp",
+    "verify:uxp": "node scripts/verify-uxp-build.cjs",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@types/react-test-renderer": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "react-test-renderer": "^18.3.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^4.1.10"
+  }
+}
