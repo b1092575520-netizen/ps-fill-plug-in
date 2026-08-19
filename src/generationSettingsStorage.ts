@@ -88,7 +88,7 @@ export function normalizeGenerationSettingsMemory(value: unknown): GenerationSet
     ? record.byMode as Record<string, unknown>
     : {};
   const byMode: GenerationSettingsMemory["byMode"] = {};
-  (["text", "redraw", "inpaint"] as const).forEach((mode) => {
+  (["text", "redraw"] as const).forEach((mode) => {
     const normalized = normalizeModeSettings(source[mode]);
     if (normalized) byMode[mode] = normalized;
   });
@@ -120,7 +120,6 @@ export function applyRememberedSettings(
     mode,
     prompt: draft.prompt,
     references: draft.references,
-    inpaintStrength: draft.inpaintStrength,
   };
 }
 

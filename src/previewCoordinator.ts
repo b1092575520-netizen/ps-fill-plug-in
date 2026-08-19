@@ -1,10 +1,7 @@
 import type { GeneratedImageAsset, PhotoshopPreviewSession } from "./backend/contracts";
-import type { SelectionBounds, SelectionSnapshot } from "./types";
-
-type PreviewSelection = SelectionBounds | SelectionSnapshot | null | undefined;
 
 interface PreviewDriver {
-  stage(documentId: string, asset: GeneratedImageAsset, selection?: PreviewSelection): Promise<PhotoshopPreviewSession>;
+  stage(documentId: string, asset: GeneratedImageAsset): Promise<PhotoshopPreviewSession>;
   discard(session: PhotoshopPreviewSession): Promise<void>;
   commit?(session: PhotoshopPreviewSession): Promise<void>;
 }
@@ -23,7 +20,7 @@ export class PreviewCoordinator {
     this.throttleMs = options.throttleMs ?? 80;
   }
 
-  show(documentId: string, asset: GeneratedImageAsset, selection?: PreviewSelection) {
+  show(documentId: string, asset: GeneratedImageAsset) {
     return this.enqueue(documentId, async () => {
       if (this.throttleMs > 0) await new Promise((resolve) => setTimeout(resolve, this.throttleMs));
       const current = this.states.get(documentId);
@@ -32,7 +29,7 @@ export class PreviewCoordinator {
         await this.driver.discard(current.session);
         this.states.delete(documentId);
       }
-      const session = await this.driver.stage(documentId, asset, selection);
+      const session = await this.driver.stage(documentId, asset);
       if (session.layerIds.length !== 1) {
         await this.driver.discard(session);
         throw new Error("候选预览必须且只能创建一个插件临时图层");

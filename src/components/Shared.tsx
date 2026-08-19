@@ -186,31 +186,6 @@ export function PrototypeNotice({ controller }: { controller: PrototypeControlle
   return <div className="prototype-notice">{controller.runtimeMode === "uxp" ? "OpenAI 兼容 API · Key 存入 UXP 安全存储 · Photoshop 真实写入" : "浏览器演示模式 · Key 仅驻留内存 · 不写入 Photoshop"}</div>;
 }
 
-export function SelectionStatusBar({ controller }: { controller: PrototypeController }) {
-  const status = controller.selectionReadStatus ?? (controller.context?.selection ? "ready" : "missing");
-  const label = status === "ready"
-    ? "选区已读取"
-    : status === "reading"
-      ? "正在读取选区…"
-      : status === "error"
-        ? "选区读取失败 · 重试"
-        : "未检测到选区";
-  return (
-    <button
-      className={`selection-status selection-status--${status}`}
-      type="button"
-      aria-live="polite"
-      title="刷新 Photoshop 当前选区状态"
-      onClick={() => { void controller.refreshSelection(); }}
-      disabled={controller.status === "queued" || controller.status === "running"}
-    >
-      <i aria-hidden="true" />
-      <span>{label}</span>
-      <UxpIcon name="refresh" className={status === "reading" ? "spin" : ""} />
-    </button>
-  );
-}
-
 export function ModeTabs({ controller, cards = false }: { controller: PrototypeController; cards?: boolean }) {
   const selectMode = (mode: GenerationMode) => controller.updateDraft({
     mode,
@@ -219,11 +194,11 @@ export function ModeTabs({ controller, cards = false }: { controller: PrototypeC
   return (
     <div className={`mode-tabs ${cards ? "mode-tabs--cards" : ""}`} role="tablist" aria-label="生成方式">
       {(Object.keys(MODE_META) as GenerationMode[]).map((mode) => (
-        <span
+        <button
           key={mode}
+          type="button"
           className={`mode-tab ${controller.draft.mode === mode ? "is-active" : ""}`}
           role="tab"
-          tabIndex={0}
           aria-selected={controller.draft.mode === mode}
           onClick={() => selectMode(mode)}
           onKeyDown={(event) => {
@@ -234,14 +209,14 @@ export function ModeTabs({ controller, cards = false }: { controller: PrototypeC
         >
           <strong>{MODE_META[mode].label}</strong>
           {cards && <small>{MODE_META[mode].description}</small>}
-        </span>
+        </button>
       ))}
     </div>
   );
 }
 
 export function PromptField({ controller, prominent = false, dragHandle, onOpenNotebook }: { controller: PrototypeController; prominent?: boolean; dragHandle?: ReactNode; onOpenNotebook: () => void }) {
-  const required = controller.draft.mode !== "inpaint";
+  const required = true;
   return (
     <div className={`prompt-field ${prominent ? "prompt-field--prominent" : ""}`}>
       <span>
@@ -466,13 +441,13 @@ export function PromptNotebookPage({ controller, onClose }: { controller: Protot
 }
 
 export function OutputControls({ controller, compact = false }: { controller: PrototypeController; compact?: boolean }) {
-  const { draft, context } = controller;
+  const { draft } = controller;
   if (draft.mode !== "text") {
     return (
       <div className="locked-ratio">
         <span>输出比例</span>
-        <strong>{draft.mode === "inpaint" && !context?.selection ? "等待选区" : controller.outputRatio}</strong>
-        <small>{draft.mode === "inpaint" ? "自动跟随当前选区，以图层蒙版非破坏性写回" : "自动跟随当前文档，作为命名图层写回"}</small>
+        <strong>{controller.outputRatio}</strong>
+        <small>自动跟随当前文档，作为命名图层写回</small>
       </div>
     );
   }
@@ -540,44 +515,6 @@ function CountStepper({ controller }: { controller: PrototypeController }) {
 
 export function DetailParameters({ controller, title = "详细参数", showHeading = true }: { controller: PrototypeController; title?: string; showHeading?: boolean }) {
   const { draft } = controller;
-  if (draft.mode === "inpaint") {
-    const local = controller.localInpaintSettings;
-    return (
-      <section className="detail-parameters">
-        {showHeading && <div className="section-title"><strong>{title}</strong><small>本地 Klein 参数</small></div>}
-        <div className="parameter-grid">
-          <div className="parameter-cell">
-            <span>Klein 档位</span>
-            <strong className="parameter-static-value">9B Distilled</strong>
-          </div>
-          <div className="parameter-cell parameter-cell--strength">
-            <span>重绘幅度</span>
-            <span className="inpaint-strength" role="group" aria-label="重绘幅度">
-              {([
-                ["subtle", "轻微"],
-                ["balanced", "标准"],
-                ["strong", "强力"],
-              ] as const).map(([value, label]) => (
-                <button
-                  type="button"
-                  key={value}
-                  className={(draft.inpaintStrength ?? "strong") === value ? "is-active" : ""}
-                  onClick={() => controller.updateDraft({ inpaintStrength: value })}
-                >
-                  {label}
-                </button>
-              ))}
-            </span>
-          </div>
-          <label className="parameter-cell parameter-cell--count">
-            <span>生成数量</span>
-            <CountStepper controller={controller} />
-          </label>
-        </div>
-        <small className="ratio-note">“强力”会提高真实提示词条件权重并要求模型明显执行指令；局部重绘分辨率仍由当前选区自动适配。</small>
-      </section>
-    );
-  }
   const capability = controller.currentModelCapability;
   const resolutions = capability?.resolutions ?? ["api-default"];
   const qualities = capability?.qualityOptions ?? [];
@@ -799,7 +736,7 @@ export function GenerateAction({ controller, dragHandle }: { controller: Prototy
     return (
       <div className="generation-progress">
         <div>{dragHandle}<UxpIcon name="refresh" className="spin" /><span>{stageLabel} · {controller.progress}% · {elapsed}</span><button type="button" onClick={controller.cancelGeneration}><UxpIcon name="stop" />取消</button></div>
-        <i><span style={{ width: `${controller.progress}%` }} /></i>
+        <i><span style={{ transform: `scaleX(${Math.max(0, Math.min(100, controller.progress)) / 100})` }} /></i>
       </div>
     );
   }
@@ -942,26 +879,17 @@ export function GlobalOverlays({ controller }: { controller: PrototypeController
                 <div className="settings-group__heading"><span>模型能力</span><small>{controller.settings.providerSnapshot ? `${controller.settings.providerSnapshot.models.length} 个模型` : "尚未同步"}</small></div>
                 <div className={`provider-meta ${controller.settings.providerSnapshot?.stale ? "is-stale" : ""}`}>
                   <span>能力来源</span><strong>{capabilitySourceLabel(controller.settings.providerSnapshot)}</strong>
+                  {controller.settings.providerSnapshot && <small>最近同步：{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(controller.settings.providerSnapshot.fetchedAt)}</small>}
                 </div>
                 <div className="generation-memory-settings">
                   <label className="settings-toggle">
-                    <span><strong>记忆最后设置</strong><small>三种模式分别保存</small></span>
+                    <span><strong>记忆最后设置</strong><small>两种模式分别保存</small></span>
                     <input type="checkbox" checked={controller.rememberLastSettings} disabled={!controller.generationSettingsReady} onChange={(event) => controller.setRememberLastSettings(event.target.checked)} />
                   </label>
                   <button className="settings-action settings-action--compact" type="button" onClick={controller.restoreDefaultGenerationSettings}>恢复默认设置</button>
                 </div>
               </section>
 
-              <section className="settings-group local-inpaint-settings">
-                <div className="settings-group__heading"><span>本地重绘</span><small>{controller.localInpaintSettings.experimental ? "实验性" : "Klein"}</small></div>
-                <p className="settings-group__hint">Klein 局部重绘 / ComfyUI，仅局部模式使用；本地运行不扣 API 积分。</p>
-                <label><span>ComfyUI 地址</span><input value={controller.localInpaintSettings.baseUrl} onChange={(event) => controller.setLocalInpaintSettings({ ...controller.localInpaintSettings, baseUrl: event.target.value, connectionStatus: "idle" })} /></label>
-                <label><span>Klein 档位</span><div className="settings-static-value">9B Distilled</div></label>
-                <button className={`settings-action ${controller.localInpaintSettings.connectionStatus === "connected" ? "is-connected" : ""}`} type="button" onClick={controller.testLocalInpaint}>
-                  <UxpIcon name={controller.localInpaintSettings.connectionStatus === "testing" ? "refresh" : "status"} className={controller.localInpaintSettings.connectionStatus === "testing" ? "spin" : "status-icon"} />
-                  {controller.localInpaintSettings.connectionStatus === "testing" ? "Klein 连接测试中…" : controller.localInpaintSettings.connectionStatus === "connected" ? "Klein 已连接" : controller.localInpaintSettings.connectionStatus === "failed" ? "Klein 连接失败，重试" : "测试 Klein 连接"}
-                </button>
-              </section>
               <ThemePicker controller={controller} />
             </div>
           </aside>

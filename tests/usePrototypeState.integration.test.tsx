@@ -27,7 +27,6 @@ vi.mock("../src/backend/runtime", () => ({
     getOpenDocumentIds: async () => host.openDocumentIds,
     insert: host.insert,
     captureReference: vi.fn(),
-    captureInpaintSnapshot: vi.fn(),
     preview: vi.fn(),
     discardPreview: vi.fn(async () => undefined),
     cleanupPluginResiduals: vi.fn(async () => undefined),

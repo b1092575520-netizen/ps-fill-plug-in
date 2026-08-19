@@ -1,14 +1,11 @@
 import type { GeneratedImageAsset } from "./backend/contracts";
 
-export type GenerationMode = "text" | "redraw" | "inpaint";
-export type LocalInpaintModel = "klein-9b";
+export type GenerationMode = "text" | "redraw";
 export type ImageQuality = "low" | "medium" | "high";
 export type ImageResolution = "api-default" | "1K" | "2K" | "4K";
-export type InpaintStrength = "subtle" | "balanced" | "strong";
 export type CapabilitySource = "api" | "adapter" | "default" | "cache";
 export type JobStatus = "idle" | "queued" | "running" | "completed" | "cancelled";
 export type GenerationStage = "idle" | "capturing" | "uploading" | "submitting" | "generating" | "downloading" | "completed";
-export type SelectionReadStatus = "ready" | "reading" | "missing" | "error";
 export type OutputTarget = "new-document" | "current-document";
 export type ThemeKey = "graphite" | "midnight" | "sakura" | "forest" | "aurora" | "sunset";
 
@@ -52,35 +49,6 @@ export interface SelectionBounds {
   height: number;
 }
 
-export interface SelectionSnapshot {
-  documentId: string;
-  documentWidth: number;
-  documentHeight: number;
-  selectionBounds: SelectionBounds;
-  cropBounds: SelectionBounds;
-  targetWidth: number;
-  targetHeight: number;
-  contextBytes: Uint8Array;
-  maskBytes: Uint8Array;
-  /** Median RGB color sampled outside the selection for removal prefill. */
-  removalFillColor?: number;
-  /** True when the sampled surrounding area is a safe, light uniform fill. */
-  removalBackgroundUniform?: boolean;
-  maskMimeType?: "image/png" | "image/jpeg";
-  /** Optional native-resolution blend mask; outside-selection pixels are zero. */
-  compositeMaskBytes?: Uint8Array;
-  compositeMaskMimeType?: "image/png";
-  selectionChannelName?: string;
-  mimeType: "image/png";
-}
-
-export interface LocalInpaintSettings {
-  baseUrl: string;
-  model: LocalInpaintModel;
-  connectionStatus: "idle" | "testing" | "connected" | "failed";
-  experimental: boolean;
-}
-
 export interface PhotoshopContext {
   documentId: string;
   documentName: string;
@@ -112,7 +80,6 @@ export interface GenerationDraft {
   customHeight: number;
   outputTarget: OutputTarget;
   references: ReferenceImage[];
-  inpaintStrength?: InpaintStrength;
 }
 
 export interface Candidate {
@@ -124,8 +91,6 @@ export interface Candidate {
   asset?: GeneratedImageAsset;
   sourceDocumentId?: string;
   outputTarget?: OutputTarget;
-  selection?: SelectionBounds | null;
-  selectionSnapshot?: SelectionSnapshot;
   generationMode?: GenerationMode;
   photoshopLayerId?: string;
 }
@@ -186,7 +151,6 @@ export interface ToastMessage {
 export const MODE_META: Record<GenerationMode, { label: string; description: string }> = {
   text: { label: "文生图", description: "按提示词创建全新画面" },
   redraw: { label: "图生图", description: "以当前可见画面为基础生成" },
-  inpaint: { label: "局部重绘", description: "跟随 Photoshop 当前选区" },
 };
 
 export const QUALITY_META: Record<ImageQuality, { label: string; hint: string }> = {

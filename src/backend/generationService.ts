@@ -2,11 +2,9 @@ import {
   ASPECT_RATIOS,
   type GenerationDraft,
   type GenerationMode,
-  type LocalInpaintModel,
   type ModelCapability,
   type PhotoshopContext,
   type ProviderSnapshot,
-  type SelectionSnapshot,
 } from "../types";
 import { XINBAO_SIZE_MAP, capabilityForModel } from "./providerCapabilities";
 import type {
@@ -14,7 +12,6 @@ import type {
   ImageGenerationRequest,
   ReferenceUploader,
 } from "./contracts";
-import type { LocalInpaintProviderContract } from "./localInpaintProvider";
 import type { RemoteRequestAudit } from "../remoteRequestLedger";
 
 export interface ImageProvider {
@@ -35,28 +32,12 @@ export interface GenerationServiceRequest {
   onStage?: (stage: "uploading" | "submitting" | "generating") => void;
   context?: PhotoshopContext;
   providerSnapshot?: ProviderSnapshot | null;
-  selectionSnapshot?: SelectionSnapshot;
-  localModel?: LocalInpaintModel;
   remoteProvider: ImageProvider;
-  localProvider: LocalInpaintProviderContract;
   remoteAudit?: RemoteRequestAudit;
 }
 
 export class GenerationService {
   async generate(request: GenerationServiceRequest) {
-    if (request.draft.mode === "inpaint") {
-      if (!request.selectionSnapshot) throw new Error("局部重绘选区快照缺失");
-      if (!request.localModel) throw new Error("请选择 Klein 模型档位");
-      request.onStage?.("generating");
-      const assets = await request.localProvider.generate({
-        prompt: request.draft.prompt,
-        count: request.draft.count,
-        seed: Date.now(),
-        snapshot: request.selectionSnapshot,
-        strength: request.draft.inpaintStrength ?? "strong",
-      }, request.signal, request.onProgress);
-      return assets.map((asset) => ({ ...asset, layerName: conciseLayerName(request.draft.prompt, "inpaint") }));
-    }
     return generateFromDraft(
       request.remoteProvider,
       request.draft,
@@ -80,7 +61,7 @@ export function generationModel(model: string, options: string[], snapshot?: Pro
 }
 
 export function conciseLayerName(prompt: string, mode: GenerationMode) {
-  const fallback = mode === "inpaint" ? "智能填充" : mode === "redraw" ? "图生图" : "生成图像";
+  const fallback = mode === "redraw" ? "图生图" : "生成图像";
   const firstDescription = prompt.trim().split(/[,，。；;\n]/, 1)[0] ?? "";
   const normalized = firstDescription
     .replace(/^(?:请|帮我|给我)?(?:生成|创建|绘制|画出?|制作|添加|变成|重绘成?)\s*/u, "")
@@ -115,21 +96,20 @@ export function realGenerationBlocker(
   isUxp: boolean,
   context?: PhotoshopContext | null,
 ) {
-  if (isUxp && draft.mode !== "inpaint" && !apiKey.trim()) return "请先配置 API Key";
+  if (isUxp && !apiKey.trim()) return "请先配置 API Key";
   const needsDocument = draft.mode !== "text" || draft.outputTarget === "current-document";
   if (isUxp && context === null && needsDocument) return "请先打开 Photoshop 文档";
-  if (draft.mode === "inpaint" && context && !context.selection) return "请先创建选区";
-  if (draft.mode !== "inpaint" && !draft.prompt.trim()) {
+  if (!draft.prompt.trim()) {
     return "请先填写提示词";
   }
-  if (draft.mode !== "inpaint" && !draft.model.trim()) return "请先选择模型";
+  if (!draft.model.trim()) return "请先选择模型";
   if (draft.mode === "text" && draft.aspectRatio === "custom") {
     return "请设置有效比例：真实接口暂只支持预设比例";
   }
-  const reservedReferences = draft.mode === "inpaint" ? 2 : draft.mode === "redraw" ? 1 : 0;
+  const reservedReferences = draft.mode === "redraw" ? 1 : 0;
   const manualReferenceCount = draft.references.filter((reference) => reference.kind !== "photoshop-context").length;
   if (reservedReferences && manualReferenceCount > 9 - reservedReferences) {
-    return `${draft.mode === "inpaint" ? "局部重绘" : "图生图"}会自动加入 ${reservedReferences} 张 Photoshop 上下文图，手动参考图最多 ${9 - reservedReferences} 张`;
+    return `图生图会自动加入 ${reservedReferences} 张 Photoshop 上下文图，手动参考图最多 ${9 - reservedReferences} 张`;
   }
   return "";
 }
@@ -148,15 +128,6 @@ function closestAspectRatio(width: number, height: number) {
 function modePrompt(draft: GenerationDraft, context?: PhotoshopContext) {
   if (draft.mode === "redraw") {
     return `请保持参考图的主体结构和构图关系，将整幅重绘为：${draft.prompt.trim()}`;
-  }
-  if (draft.mode === "inpaint") {
-    const selection = context?.selection;
-    if (!selection) throw new Error("局部重绘需要 Photoshop 选区");
-    const requested = draft.prompt.trim()
-      ? `生成以下内容：${draft.prompt.trim()}`
-      : "根据周边画面、光照、纹理与透视自然补全，不新增文字或边框";
-    const percent = (value: number, total: number) => `${(value / total * 100).toFixed(2)}%`;
-    return `${requested}。第1张参考图是完整画面，第2张参考图是选区内容。仅重绘完整画面中 x=${selection.x}, y=${selection.y}, width=${selection.width}, height=${selection.height} 的区域（左=${percent(selection.x, context.width)}，上=${percent(selection.y, context.height)}，宽=${percent(selection.width, context.width)}，高=${percent(selection.height, context.height)}）。选区外画面必须保持不变`;
   }
   return draft.prompt.trim();
 }
@@ -204,9 +175,7 @@ export async function generateFromDraft(
     ? draft
     : {
         ...draft,
-        aspectRatio: draft.mode === "inpaint" && context.selection
-          ? closestAspectRatio(context.selection.width, context.selection.height)
-          : closestAspectRatio(context.width, context.height),
+        aspectRatio: closestAspectRatio(context.width, context.height),
       };
   const prompt = modePrompt(draft, context);
   const capability = capabilityForModel(providerSnapshot ?? null, model);

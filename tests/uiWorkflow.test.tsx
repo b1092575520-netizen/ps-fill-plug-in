@@ -13,7 +13,6 @@ import {
   PromptField,
   PromptNotebookPage,
   ReferenceImages,
-  SelectionStatusBar,
   WriteRecovery,
 } from "../src/components/Shared";
 import { PluginPanel } from "../src/PluginPanel";
@@ -56,14 +55,6 @@ function controller(
     reorderReference: vi.fn(),
     removeReference: vi.fn(),
     clearReferences: vi.fn(),
-    localInpaintSettings: {
-      baseUrl: "http://127.0.0.1:8188",
-      model: "klein-9b",
-      connectionStatus: "idle",
-      experimental: true,
-    },
-    setLocalInpaintSettings: vi.fn(),
-    testLocalInpaint: vi.fn(),
     workspaceView: "configuration",
     candidates: [],
     outputRatio: "1:1",
@@ -142,18 +133,6 @@ describe("compact workflow UI", () => {
     act(() => tree.unmount());
   });
 
-  it("shows a compact selection lamp instead of the old document card", () => {
-    const html = renderToStaticMarkup(<SelectionStatusBar controller={controller({
-      context: { documentId: "doc", documentName: "画面.psd", width: 6000, height: 4000, colorMode: "RGB", selection: { x: 1, y: 2, width: 1200, height: 800 } },
-      selectionReadStatus: "ready",
-      refreshSelection: vi.fn(),
-    })} />);
-    expect(html).toContain("选区已读取");
-    expect(html).toContain("selection-status--ready");
-    expect(html).not.toContain("1200×800");
-    expect(html).not.toContain("context-bar");
-  });
-
   it("renders custom aspect ratio as a ratio pair, never as pixel dimensions", () => {
     const html = renderToStaticMarkup(<OutputControls controller={controller({
       draft: { ...draft, aspectRatio: "custom", customWidth: 5, customHeight: 4 },
@@ -165,15 +144,6 @@ describe("compact workflow UI", () => {
     expect(html).toContain('aria-label="自定义比例高"');
     expect(html).toContain("自定义比例 5:4");
     expect(html).not.toContain("px");
-  });
-
-  it("exposes the error lamp and refresh action", () => {
-    const html = renderToStaticMarkup(<SelectionStatusBar controller={controller({
-      selectionReadStatus: "error",
-      refreshSelection: vi.fn(),
-    })} />);
-    expect(html).toContain("选区读取失败 · 重试");
-    expect(html).toContain('data-uxp-icon="refresh"');
   });
 
   it("opens the prompt notebook as an independent page and filters notes", () => {
@@ -206,7 +176,7 @@ describe("compact workflow UI", () => {
       promptNotes: notebookNotes,
       promptNotesReady: true,
       promptHistoryReady: true,
-      promptHistory: [{ id: "history-a", prompt: "历史白花", mode: "text", lastUsedAt: 2 }, { id: "history-b", prompt: "历史修复", mode: "inpaint", lastUsedAt: 1 }],
+      promptHistory: [{ id: "history-a", prompt: "历史白花", mode: "text", lastUsedAt: 2 }, { id: "history-b", prompt: "历史修复", mode: "redraw", lastUsedAt: 1 }],
       updateDraft,
       deletePromptHistory,
       clearPromptHistory,
@@ -740,7 +710,7 @@ describe("compact workflow UI", () => {
     expect(css).toMatch(/button,\s*input,\s*textarea,\s*select\s*\{[^}]*margin:\s*0/s);
     expect(css).toMatch(/body\.uxp-shell \.panel-section,[\s\S]*body\.uxp-shell \.panel-action-bar\s*\{[^}]*margin:\s*0/s);
     expect(css).toMatch(/body\.uxp-shell \.dock-panel\s*\{[^}]*width:\s*100%[^}]*max-width:\s*none[^}]*height:\s*100%/s);
-    expect(css).toMatch(/body\.uxp-shell \.property-section\s*\{[^}]*padding:\s*0 3px 2px/s);
+    expect(css).toMatch(/body\.uxp-shell \.property-section\s*\{[^}]*padding:\s*4px 9px 4px/s);
   });
 
   it("paints every UXP viewport layer opaquely during live panel resize", () => {
@@ -757,16 +727,6 @@ describe("compact workflow UI", () => {
     expect(css).toMatch(/\.parameter-cell\s*\{[^}]*font-size:\s*11px/s);
   });
 
-  it("keeps the optional inpaint prompt heading on one line", () => {
-    const html = renderToStaticMarkup(<PromptField controller={controller({
-      draft: { ...draft, mode: "inpaint" },
-    })} onOpenNotebook={vi.fn()} />);
-    expect(html).toContain('title="可留空，按上下文填充">可选</small>');
-    expect(html).not.toContain(">可留空，按上下文填充</small>");
-    const css = readFileSync("src/styles.css", "utf8");
-    expect(css).toMatch(/\.prompt-field > span > span\s*\{[^}]*min-width:\s*0[^}]*white-space:\s*nowrap/s);
-  });
-
   it("centers compact parameter values and suppresses motion during UXP live resize", () => {
     const css = readFileSync("src/styles.css", "utf8");
     const source = readFileSync("src/PluginPanel.tsx", "utf8");
@@ -777,6 +737,23 @@ describe("compact workflow UI", () => {
     expect(css).toMatch(/body\.uxp-shell \.plugin-panel\.is-resizing,[\s\S]*body\.uxp-shell \.plugin-panel\.is-resizing \*\s*\{[^}]*animation:\s*none !important[^}]*transition:\s*none !important/s);
     expect(source).toContain('window.addEventListener("resize", handleResize)');
     expect(source).toContain('classList.add("is-resizing")');
+  });
+
+  it("keeps the empty reference actions side by side in the narrow UXP panel", () => {
+    const css = readFileSync("src/styles.css", "utf8");
+    const html = renderToStaticMarkup(<ReferenceImages controller={controller()} showHeading={false} />);
+    expect(html).toContain('class="reference-empty-actions"');
+    expect(html).toContain("本地图片");
+    expect(html).toContain("当前选区");
+    expect(css).toMatch(/\.reference-empty-actions\s*\{[^}]*display:\s*flex/s);
+    expect(css).toMatch(/body\.uxp-shell \.reference-empty-action\s*\{[^}]*flex:\s*1 1 0/s);
+  });
+
+  it("gives UXP dropdown triggers and menus a stable centered control surface", () => {
+    const css = readFileSync("src/styles.css", "utf8");
+    expect(css).toMatch(/\.uxp-dropdown__trigger\s*\{[^}]*display:\s*flex[^}]*height:\s*27px/s);
+    expect(css).toMatch(/\.uxp-dropdown__trigger\[aria-expanded="true"\]/);
+    expect(css).toMatch(/\.uxp-dropdown__list\s*\{[^}]*position:\s*absolute[^}]*z-index:\s*40/s);
   });
 
   it("uses real DOM dropdown buttons without native-select or fake-value layers", () => {
@@ -809,16 +786,6 @@ describe("compact workflow UI", () => {
     const html = renderToStaticMarkup(<GenerateAction controller={controller()} />);
     expect(html).toContain(">生成 3 张</button>");
     expect(html).not.toContain("disabled");
-  });
-
-  it("shows real local inpaint strength controls with strong selected by default", () => {
-    const html = renderToStaticMarkup(<DetailParameters controller={controller({
-      draft: { ...draft, mode: "inpaint", inpaintStrength: "strong" },
-    })} />);
-    expect(html).toContain("重绘幅度");
-    expect(html).toContain(">轻微</button>");
-    expect(html).toContain(">标准</button>");
-    expect(html).toContain('class="is-active">强力</button>');
   });
 
   it("replaces generation with progress and cancellation while a job is active", () => {
@@ -949,23 +916,67 @@ describe("compact workflow UI", () => {
     expect(sharedSource).toContain("data-uxp-icon={name}");
   });
 
-  it("keeps exactly the three approved generation modes", () => {
+  it("keeps exactly the two approved generation modes", () => {
     const updateDraft = vi.fn();
     const tree = create(<ModeTabs controller={controller({ updateDraft })} />);
     const tabs = tree.root.findAllByProps({ role: "tab" });
-    expect(tabs).toHaveLength(3);
-    expect(tabs.every((tab) => tab.type === "span")).toBe(true);
+    expect(tabs).toHaveLength(2);
+    expect(tabs.every((tab) => tab.type === "button")).toBe(true);
+    expect(tabs[0].findByType("strong").children.join("")).toContain("文生图");
+    expect(tabs[1].findByType("strong").children.join("")).toContain("图生图");
     expect(tabs.filter((tab) => tab.props["aria-selected"])).toHaveLength(1);
     act(() => tabs[1].props.onClick());
-    expect(updateDraft).toHaveBeenLastCalledWith(expect.objectContaining({ mode: "redraw" }));
-    act(() => tabs[2].props.onKeyDown({ key: "Enter", preventDefault: vi.fn() }));
-    expect(updateDraft).toHaveBeenLastCalledWith(expect.objectContaining({ mode: "inpaint" }));
+    expect(updateDraft).toHaveBeenLastCalledWith({ mode: "redraw", outputTarget: "current-document" });
     const html = renderToStaticMarkup(<ModeTabs controller={controller()} />);
-    expect(html).not.toContain("<button");
+    expect(html).toContain('<button type="button"');
     expect(html).not.toContain("整图重绘");
     expect(html.indexOf("文生图")).toBeLessThan(html.indexOf("图生图"));
-    expect(html.indexOf("图生图")).toBeLessThan(html.indexOf("局部重绘"));
     act(() => tree.unmount());
+  });
+
+  it("keeps narrow UXP custom controls wide enough for their values", () => {
+    const css = readFileSync("src/styles.css", "utf8");
+    expect(css).toMatch(/\.field-row\s*>\s*\.uxp-dropdown\s*\{[^}]*flex:\s*1 1 auto[^}]*width:\s*100%/s);
+    expect(css).toMatch(/\.parameter-cell\s*>\s*\.uxp-dropdown\s*\{[^}]*width:\s*100%/s);
+    expect(css).toMatch(/\.reference-empty-actions\s*\{[^}]*display:\s*flex/s);
+    expect(css).toMatch(/\.prompt-header-button\s*\{[^}]*height:\s*27px[^}]*border:\s*1px solid var\(--line\)/s);
+    expect(css).toMatch(/\.prompt-header-button:disabled\s*\{[^}]*border-color:\s*var\(--line\)/s);
+  });
+
+  it("supports keyboard activation without generating", () => {
+    const updateDraft = vi.fn();
+    const tree = create(<ModeTabs controller={controller({ updateDraft })} />);
+    const tab = tree.root.findAllByProps({ role: "tab" })[1];
+    const preventDefault = vi.fn();
+    act(() => tab.props.onKeyDown({ key: "Enter", preventDefault }));
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(updateDraft).toHaveBeenCalledWith({ mode: "redraw", outputTarget: "current-document" });
+    act(() => tree.unmount());
+  });
+
+  it("shows truthful model capability source, count, and fetched time", () => {
+    const html = renderToStaticMarkup(<GlobalOverlays controller={controller({
+      settingsOpen: true,
+      settings: {
+        baseUrl: "https://example.test",
+        apiKey: "",
+        modelOptions: ["model-a", "model-b"],
+        connectionStatus: "connected",
+        providerSnapshot: {
+          models: [
+            { id: "model-a", confirmedImage: true, resolutions: ["2K"], qualityOptions: [], aspectRatios: ["1:1"], defaultResolution: "2K" },
+            { id: "model-b", confirmedImage: true, resolutions: ["2K"], qualityOptions: [], aspectRatios: ["1:1"], defaultResolution: "2K" },
+          ],
+          credentialVerified: true,
+          source: "api",
+          fetchedAt: Date.UTC(2026, 0, 2, 3, 4),
+          stale: false,
+        },
+      },
+    })} />);
+    expect(html).toContain("2 个模型");
+    expect(html).toContain("能力来源");
+    expect(html).toContain("最近同步");
   });
 
   it("gives the main prompt field enough height for multi-line editing", () => {
@@ -974,57 +985,7 @@ describe("compact workflow UI", () => {
     expect(css).toMatch(/body\.uxp-shell \.prompt-field textarea\s*\{[^}]*height:\s*72px[^}]*min-height:\s*72px[^}]*max-height:\s*72px/s);
   });
 
-  it("shows only Klein controls in local inpaint mode and hides remote reference UI", () => {
-    const html = renderToStaticMarkup(<DetailParameters controller={controller({
-      draft: { ...draft, mode: "inpaint" },
-      settings: {
-        baseUrl: "https://async.xinbao-ai.com",
-        apiKey: "",
-        modelOptions: ["gpt-image-2-oai"],
-        connectionStatus: "connected",
-        providerSnapshot: null,
-      },
-    })} />);
-    expect(html).toContain("Klein 档位");
-    expect(html).toContain("9B Distilled");
-    expect(html).not.toContain("4B Base");
-    expect(html).not.toContain("gpt-image-2-oai");
-    expect(html).not.toContain("<span>生成质量</span>");
-    expect(html).not.toContain("<span>分辨率</span>");
-
-    const panelSource = readFileSync("src/PluginPanel.tsx", "utf8");
-    expect(panelSource).toMatch(/draft\.mode !== "inpaint" && <div className="panel-section panel-section--references"/);
-  });
-
-  it("exposes local address, model slot and health test in connection settings", () => {
-    const html = renderToStaticMarkup(<GlobalOverlays controller={controller({
-      settingsOpen: true,
-      settings: {
-        baseUrl: "https://async.xinbao-ai.com",
-        apiKey: "",
-        modelOptions: [],
-        connectionStatus: "idle",
-        providerSnapshot: null,
-      },
-      credentialSaveStatus: "saved",
-      theme: "graphite",
-      setSettingsOpen: vi.fn(),
-      setSettings: vi.fn(),
-      saveApiKey: vi.fn(),
-      refreshModels: vi.fn(),
-      testConnection: vi.fn(),
-      setTheme: vi.fn(),
-    })} />);
-    expect(html).toContain("http://127.0.0.1:8188");
-    expect(html).toContain("Klein 局部重绘");
-    expect(html).toContain("实验性");
-    expect(html).toContain("9B Distilled");
-    expect(html).not.toContain("4B Base");
-    expect(html).not.toContain('<select disabled=""');
-    expect(html).toContain("测试 Klein 连接");
-  });
-
-  it("groups connection settings into four readable sections with one primary action", () => {
+  it("groups connection settings into three readable sections with one primary action", () => {
     const html = renderToStaticMarkup(<GlobalOverlays controller={controller({
       settingsOpen: true,
       credentialSaveStatus: "idle",
@@ -1038,19 +999,17 @@ describe("compact workflow UI", () => {
     })} />);
     expect(html).toContain(">API 连接<");
     expect(html).toContain(">模型能力<");
-    expect(html).toContain(">本地重绘<");
     expect(html).toContain(">外观<");
     expect(html).toContain("当前：石墨灰");
     expect(html.match(/settings-action--primary/g)).toHaveLength(1);
     expect(html).toContain('class="settings-secondary-actions"');
     expect(html).toMatch(/settings-secondary-actions[\s\S]*刷新模型[\s\S]*aria-label="测试连接"/);
-    expect(html).toContain('class="settings-static-value">9B Distilled</div>');
   });
 
   it("keeps every settings group reachable in a short UXP panel", () => {
     const css = readFileSync("src/styles.css", "utf8");
     expect(css).toMatch(/body\.uxp-shell \.settings-drawer\s*\{[^}]*height:\s*100%[^}]*min-height:\s*0[^}]*overflow:\s*hidden/s);
-    expect(css).toMatch(/body\.uxp-shell \.settings-body\s*\{[^}]*flex:\s*1 1 auto[^}]*min-height:\s*0[^}]*overflow-y:\s*scroll/s);
+    expect(css).toMatch(/body\.uxp-shell \.settings-body\s*\{[^}]*flex:\s*1 1 auto[^}]*min-height:\s*0[^}]*overflow-y:\s*auto/s);
     expect(css).toMatch(/body\.uxp-shell \.settings-group\s*\{[^}]*flex:\s*0 0 auto/s);
   });
 
@@ -1092,7 +1051,6 @@ describe("compact workflow UI", () => {
     expect(css).toContain(".generate-button:hover:not(:disabled)");
     expect(css).toContain("translateY(-1px)");
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
-    expect(css).toContain(".selection-status--ready");
   });
 
   it("routes browser local input through the reference pipeline without claiming unsupported UXP drop", () => {

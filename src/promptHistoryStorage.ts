@@ -18,7 +18,7 @@ function getUxpRequire(): UxpRequire | null {
 }
 
 function isMode(value: unknown): value is GenerationMode {
-  return value === "text" || value === "redraw" || value === "inpaint";
+  return value === "text" || value === "redraw";
 }
 
 export function normalizePromptHistory(value: unknown): PromptHistoryEntry[] {

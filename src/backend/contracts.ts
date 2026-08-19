@@ -1,9 +1,6 @@
 import type {
-  LocalInpaintModel,
   OutputTarget,
   PhotoshopContext,
-  SelectionBounds,
-  SelectionSnapshot,
 } from "../types";
 import type { AssetOwner } from "../assetLifecycleManager";
 import type { RemoteRequestAudit } from "../remoteRequestLedger";
@@ -69,15 +66,9 @@ export interface PhotoshopRuntime {
     documentId?: string,
     owner?: AssetOwner,
   ): Promise<CapturedReference>;
-  captureInpaintSnapshot(
-    documentId: string | undefined,
-    model: LocalInpaintModel,
-    owner?: AssetOwner,
-  ): Promise<SelectionSnapshot>;
   insertIntoCurrentDocument(
     assets: GeneratedImageAsset[],
     documentId?: string,
-    selection?: SelectionBounds | SelectionSnapshot | null,
     owner?: AssetOwner,
   ): Promise<string[]>;
   createDocumentFromImages(assets: GeneratedImageAsset[], owner?: AssetOwner): Promise<string[]>;
@@ -85,7 +76,6 @@ export interface PhotoshopRuntime {
   discardPreviewLayers(documentId: string, layerIds: string[], keepLayerId?: string): Promise<void>;
   cleanupTemporaryFiles(owner?: AssetOwner): Promise<void>;
   cleanupPluginResiduals?(): Promise<void>;
-  cleanupSelectionChannel?(documentId: string, channelName: string): Promise<void>;
 }
 
 export interface PhotoshopWriter {
@@ -96,16 +86,10 @@ export interface PhotoshopWriter {
     documentId?: string,
     owner?: AssetOwner,
   ): Promise<CapturedReference>;
-  captureInpaintSnapshot(
-    documentId: string | undefined,
-    model: LocalInpaintModel,
-    owner?: AssetOwner,
-  ): Promise<SelectionSnapshot>;
   insert(
     assets: GeneratedImageAsset[],
     target: OutputTarget,
     documentId?: string,
-    selection?: SelectionBounds | SelectionSnapshot | null,
     owner?: AssetOwner,
   ): Promise<PhotoshopPreviewSession>;
   preview(
@@ -117,5 +101,4 @@ export interface PhotoshopWriter {
     keepLayerId?: string,
   ): Promise<void>;
   cleanupPluginResiduals(): Promise<void>;
-  cleanupSelectionChannel(documentId: string, channelName: string): Promise<void>;
 }

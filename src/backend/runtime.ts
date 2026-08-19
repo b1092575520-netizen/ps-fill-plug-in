@@ -1,8 +1,5 @@
 import type {
-  LocalInpaintModel,
   PhotoshopContext,
-  SelectionBounds,
-  SelectionSnapshot,
 } from "../types";
 import { AssetLifecycleManager, type AssetOwner } from "../assetLifecycleManager";
 import { MemoryCredentialStore, SecureCredentialStore } from "./credentials";
@@ -14,12 +11,6 @@ import type {
 } from "./contracts";
 import { PhotoshopGateway } from "./photoshopGateway";
 import { filesFromUxpEntries } from "./referenceSelection";
-import {
-  computeInpaintGeometry,
-  encodeGrayscalePng,
-  featherSelectionMask,
-  rasterizeSelectionMask,
-} from "./localInpaintGeometry";
 
 type UxpRequire = (moduleName: string) => any;
 
@@ -82,10 +73,6 @@ class BrowserPhotoshopRuntime implements PhotoshopRuntime {
 
   async captureVisibleComposite(): Promise<CapturedReference> {
     throw new Error("浏览器演示模式不能读取 Photoshop 画面");
-  }
-
-  async captureInpaintSnapshot(): Promise<SelectionSnapshot> {
-    throw new Error("浏览器演示模式不能读取 Photoshop 选区");
   }
 
   async insertIntoCurrentDocument(): Promise<string[]> {
@@ -224,316 +211,9 @@ export class UxpPhotoshopRuntime implements PhotoshopRuntime {
     }
   }
 
-  async captureInpaintSnapshot(
-    documentId: string | undefined,
-    model: LocalInpaintModel,
-    owner?: AssetOwner,
-  ): Promise<SelectionSnapshot> {
-    const source = this.findDocument(documentId);
-    const selection = this.selectionBounds(source);
-    if (!selection) throw new Error("请先在 Photoshop 中建立选区");
-    const documentWidth = Number(source.width);
-    const documentHeight = Number(source.height);
-    const geometry = computeInpaintGeometry(
-      selection,
-      documentWidth,
-      documentHeight,
-      model,
-    );
-    const folder = await this.uxp.storage.localFileSystem.getTemporaryFolder();
-    const stamp = this.nextTemporaryStamp();
-    const contextFile = await folder.createFile(`ps-fill-klein-context-${stamp}.png`, { overwrite: true });
-    this.trackTemporaryFile(contextFile, owner);
-
-    const contextDuplicate = await source.duplicate(`Klein 上下文 ${stamp}`);
-    try {
-      await contextDuplicate.crop({
-        left: geometry.cropBounds.x,
-        top: geometry.cropBounds.y,
-        right: geometry.cropBounds.x + geometry.cropBounds.width,
-        bottom: geometry.cropBounds.y + geometry.cropBounds.height,
-      });
-      // Keep the cropped context at its native document resolution. Klein's
-      // workflow performs the single model-space resize; resizing here first
-      // and then resizing again in ComfyUI creates a second aspect-ratio and
-      // resampling transform that cannot be reversed during writeback.
-      await contextDuplicate.flatten();
-      await contextDuplicate.saveAs.png(contextFile, { compression: 4, interlaced: false }, true);
-    } finally {
-      await contextDuplicate.closeWithoutSaving();
-    }
-
-    const selectionChannelName = `ps-fill-selection-${stamp}`;
-    const savedChannel = await source.selection.save(selectionChannelName);
-    const selectionChannel = savedChannel ?? this.findChannel(source, selectionChannelName);
-    if (!selectionChannel) throw new Error("Photoshop 未返回局部重绘选区通道");
-
-    try {
-      const contextData = await contextFile.read({ format: this.uxp.storage.formats.binary });
-      if ((model as string) === "klein-4b") {
-        const imaging = this.photoshop.imaging;
-        if (typeof imaging?.getSelection === "function") {
-          const result = await imaging.getSelection({
-            documentID: source.id,
-            sourceBounds: {
-              left: geometry.cropBounds.x,
-              top: geometry.cropBounds.y,
-              right: geometry.cropBounds.x + geometry.cropBounds.width,
-              bottom: geometry.cropBounds.y + geometry.cropBounds.height,
-            },
-          });
-          result?.imageData?.dispose?.();
-        }
-      }
-      const encodedMask = (model as string) === "klein-4b"
-        ? {
-          bytes: new Uint8Array(),
-          mimeType: "image/png" as const,
-          compositeBytes: new Uint8Array(),
-          compositeMimeType: "image/png" as const,
-          removalFillColor: 0xffffff,
-          removalBackgroundUniform: false,
-        }
-        : await this.captureSelectionMask(
-          source,
-          geometry.cropBounds,
-          geometry.compositeFeatherRadius,
-        );
-      return {
-        documentId: String(source.id),
-        documentWidth,
-        documentHeight,
-        selectionBounds: { ...selection },
-        cropBounds: geometry.cropBounds,
-        targetWidth: geometry.targetWidth,
-        targetHeight: geometry.targetHeight,
-        contextBytes: new Uint8Array(contextData),
-        maskBytes: encodedMask.bytes,
-        maskMimeType: encodedMask.mimeType,
-        removalFillColor: encodedMask.removalFillColor,
-        removalBackgroundUniform: encodedMask.removalBackgroundUniform,
-        compositeMaskBytes: encodedMask.compositeBytes,
-        compositeMaskMimeType: encodedMask.compositeMimeType,
-        selectionChannelName,
-        mimeType: "image/png",
-      };
-    } catch (error) {
-      await this.removeSelectionChannel(source, selectionChannelName);
-      throw error;
-    }
-  }
-
-  private async captureSelectionMask(
-    document: any,
-    cropBounds: SelectionBounds,
-    compositeFeatherRadius: number,
-  ): Promise<{
-    bytes: Uint8Array;
-    mimeType: "image/png";
-    compositeBytes: Uint8Array;
-    compositeMimeType: "image/png";
-    removalFillColor: number;
-    removalBackgroundUniform: boolean;
-  }> {
-    const imaging = this.photoshop.imaging;
-    if (!imaging?.getSelection) {
-      throw new Error("Photoshop Imaging API 不可用，无法导出局部重绘遮罩");
-    }
-    let imageData: any;
-    try {
-      const result = await imaging.getSelection({
-        documentID: document.id,
-        sourceBounds: {
-          left: cropBounds.x,
-          top: cropBounds.y,
-          right: cropBounds.x + cropBounds.width,
-          bottom: cropBounds.y + cropBounds.height,
-        },
-      });
-      imageData = result.imageData;
-      const sourceBounds = result.sourceBounds;
-      if (!imageData || !sourceBounds) {
-        throw new Error("Photoshop 未返回选区图像尺寸或 sourceBounds");
-      }
-      const sourceWidth = Number(imageData.width);
-      const sourceHeight = Number(imageData.height);
-      const sourceData = await imageData.getData({ chunky: true });
-      const pixels = sourceWidth * sourceHeight;
-      if (!Number.isInteger(pixels) || pixels <= 0 || sourceData.length % pixels !== 0) {
-        throw new Error("Photoshop 返回的选区像素长度与图像尺寸不一致");
-      }
-      const components = sourceData.length / pixels;
-      const grayscale = rasterizeSelectionMask(
-        cropBounds,
-        {
-          left: Number(sourceBounds.left),
-          top: Number(sourceBounds.top),
-          right: Number(sourceBounds.right),
-          bottom: Number(sourceBounds.bottom),
-        },
-        sourceWidth,
-        sourceHeight,
-        components,
-        sourceData,
-      );
-      if (!grayscale.some((value) => value > 0)) {
-        throw new Error("Photoshop 返回了空的局部重绘选区遮罩");
-      }
-      return {
-        bytes: encodeGrayscalePng(grayscale, cropBounds.width, cropBounds.height),
-        mimeType: "image/png",
-        compositeBytes: encodeGrayscalePng(
-          featherSelectionMask(
-            grayscale,
-            cropBounds.width,
-            cropBounds.height,
-            compositeFeatherRadius,
-          ),
-          cropBounds.width,
-          cropBounds.height,
-        ),
-        compositeMimeType: "image/png",
-        ...await this.sampleRemovalFillColor(
-          document,
-          cropBounds,
-          grayscale,
-        ),
-      };
-    } catch (error) {
-      throw new Error(`无法导出局部重绘选区遮罩：${(error as Error).message}`);
-    } finally {
-      imageData?.dispose?.();
-    }
-  }
-
-  /**
-   * Returns a robust RGB fill for the model's removal prefill. Sampling the
-   * pixels outside the user's mask keeps the model from seeing a synthetic
-   * gray patch while still adapting to white paper, skin, fabric, or another
-   * local background. Photoshop versions without getPixels fall back to
-   * white, which is safer for the common generative-fill case than gray.
-   */
-  private async sampleRemovalFillColor(
-    document: any,
-    cropBounds: SelectionBounds,
-    mask: Uint8Array,
-  ) {
-    const imaging = this.photoshop.imaging;
-    if (typeof imaging?.getPixels !== "function") {
-      return { removalFillColor: 0xffffff, removalBackgroundUniform: false };
-    }
-    let imageData: any;
-    try {
-      const result = await imaging.getPixels({
-        documentID: document.id,
-        sourceBounds: {
-          left: cropBounds.x,
-          top: cropBounds.y,
-          right: cropBounds.x + cropBounds.width,
-          bottom: cropBounds.y + cropBounds.height,
-        },
-        targetSize: { width: cropBounds.width, height: cropBounds.height },
-        colorSpace: "RGB",
-        componentSize: 8,
-        applyAlpha: true,
-      });
-      imageData = result?.imageData;
-      const width = Number(imageData?.width);
-      const height = Number(imageData?.height);
-      if (width !== cropBounds.width || height !== cropBounds.height) {
-        return { removalFillColor: 0xffffff, removalBackgroundUniform: false };
-      }
-      const raw = await imageData.getData({ chunky: true });
-      const data = raw instanceof Uint8Array
-        ? raw
-        : new Uint8Array(raw?.buffer ?? raw);
-      const pixels = width * height;
-      const components = data.length / pixels;
-      if (!Number.isInteger(components) || components < 3) {
-        return { removalFillColor: 0xffffff, removalBackgroundUniform: false };
-      }
-
-      const channels: [number[], number[], number[]] = [[], [], []];
-      for (let index = 0; index < pixels; index += 1) {
-        if (mask[index] > 0) continue;
-        const offset = index * components;
-        if (components >= 4 && data[offset + 3] < 16) continue;
-        channels[0].push(data[offset]);
-        channels[1].push(data[offset + 1]);
-        channels[2].push(data[offset + 2]);
-      }
-      if (!channels[0].length) {
-        return { removalFillColor: 0xffffff, removalBackgroundUniform: false };
-      }
-      const median = (values: number[]) => {
-        values.sort((left, right) => left - right);
-        return values[Math.floor(values.length / 2)];
-      };
-      const red = median(channels[0]);
-      const green = median(channels[1]);
-      const blue = median(channels[2]);
-      const nearMedian = channels[0].reduce((count, value, index) => (
-        count
-        + (Math.max(
-          Math.abs(value - red),
-          Math.abs(channels[1][index] - green),
-          Math.abs(channels[2][index] - blue),
-        ) <= 12 ? 1 : 0)
-      ), 0);
-      const lightNeutral = Math.min(red, green, blue) >= 205
-        && Math.max(red, green, blue) - Math.min(red, green, blue) <= 20;
-      let boundarySamples = 0;
-      let boundaryNonLight = 0;
-      const isNearSelection = (x: number, y: number) => {
-        for (let dy = -2; dy <= 2; dy += 1) {
-          for (let dx = -2; dx <= 2; dx += 1) {
-            const nearX = x + dx;
-            const nearY = y + dy;
-            if (
-              nearX >= 0
-              && nearX < width
-              && nearY >= 0
-              && nearY < height
-              && mask[nearY * width + nearX] > 0
-            ) return true;
-          }
-        }
-        return false;
-      };
-      for (let y = 0; y < height; y += 1) {
-        for (let x = 0; x < width; x += 1) {
-          const index = y * width + x;
-          if (mask[index] > 0 || !isNearSelection(x, y)) continue;
-          const offset = index * components;
-          boundarySamples += 1;
-          if (
-            Math.min(data[offset], data[offset + 1], data[offset + 2]) < 190
-            || Math.max(data[offset], data[offset + 1], data[offset + 2])
-              - Math.min(data[offset], data[offset + 1], data[offset + 2]) > 28
-          ) {
-            boundaryNonLight += 1;
-          }
-        }
-      }
-      const boundaryUniform = boundarySamples === 0
-        || boundaryNonLight / boundarySamples <= 0.03;
-      return {
-        removalFillColor: (red << 16) | (green << 8) | blue,
-        removalBackgroundUniform: lightNeutral
-          && nearMedian / channels[0].length >= 0.6
-          && boundaryUniform,
-      };
-    } catch {
-      return { removalFillColor: 0xffffff, removalBackgroundUniform: false };
-    } finally {
-      imageData?.dispose?.();
-    }
-  }
-
   async insertIntoCurrentDocument(
     assets: GeneratedImageAsset[],
     documentId?: string,
-    selection?: SelectionBounds | SelectionSnapshot | null,
     owner?: AssetOwner,
   ) {
     const document = this.findDocument(documentId);
@@ -543,16 +223,6 @@ export class UxpPhotoshopRuntime implements PhotoshopRuntime {
         || String(this.photoshop.app.activeDocument.id) !== String(document.id))
     ) {
       throw new Error("生成期间 Photoshop 当前文档已切换，已拒绝写入");
-    }
-    if (
-      selection
-      && "selectionBounds" in selection
-      && (
-        Number(document.width) !== selection.documentWidth
-        || Number(document.height) !== selection.documentHeight
-      )
-    ) {
-      throw new Error("生成期间 Photoshop 文档尺寸已变化，已拒绝写入");
     }
     await this.photoshop.action.batchPlay([{
       _obj: "select",
@@ -570,9 +240,6 @@ export class UxpPhotoshopRuntime implements PhotoshopRuntime {
           true,
         );
         if (layer.id !== undefined) layerIds.push(String(layer.id));
-        if (selection) {
-          await this.fitAndMaskLayer(document, layer, selection, owner);
-        }
         layer.visible = index === 0;
       }
     } catch (error) {
@@ -585,10 +252,6 @@ export class UxpPhotoshopRuntime implements PhotoshopRuntime {
         }
       }
       throw error;
-    } finally {
-      if (selection && "selectionChannelName" in selection && selection.selectionChannelName) {
-        await this.removeSelectionChannel(document, selection.selectionChannelName);
-      }
     }
     return layerIds;
   }
@@ -712,12 +375,6 @@ export class UxpPhotoshopRuntime implements PhotoshopRuntime {
     }
   }
 
-  async cleanupSelectionChannel(documentId: string, channelName: string) {
-    if (!channelName.startsWith("ps-fill-selection-")) return;
-    const document = this.photoshop.app.documents.find((item: any) => String(item.id) === documentId);
-    if (document) await this.removeSelectionChannel(document, channelName);
-  }
-
   private async writeTemporaryFiles(assets: GeneratedImageAsset[], owner?: AssetOwner) {
     const folder = await this.uxp.storage.localFileSystem.getTemporaryFolder();
     const files = [];
@@ -808,222 +465,6 @@ export class UxpPhotoshopRuntime implements PhotoshopRuntime {
     return layer;
   }
 
-  private async fitAndMaskLayer(
-    document: any,
-    layer: any,
-    selectionInput: SelectionBounds | SelectionSnapshot,
-    owner?: AssetOwner,
-  ) {
-    const snapshot: SelectionSnapshot | null = "selectionBounds" in selectionInput
-      ? selectionInput
-      : null;
-    const selection: SelectionBounds = snapshot
-      ? snapshot.selectionBounds
-      : selectionInput as SelectionBounds;
-    const placement = snapshot?.cropBounds ?? selection;
-    const number = (item: unknown) => Number(
-      typeof item === "object" && item && "value" in item
-        ? (item as { value: unknown }).value
-        : typeof item === "object" && item && "_value" in item
-          ? (item as { _value: unknown })._value
-        : item,
-    );
-    const readNumbers = async () => {
-      const bounds = await this.readLayerBounds(layer);
-      const left = number(bounds.left);
-      const top = number(bounds.top);
-      const right = number(bounds.right);
-      const bottom = number(bounds.bottom);
-      const width = right - left;
-      const height = bottom - top;
-      if (
-        ![left, top, right, bottom, width, height].every(Number.isFinite)
-        || width <= 0
-        || height <= 0
-      ) {
-        throw new Error("无法读取生成图层尺寸");
-      }
-      return { left, top, right, bottom, width, height };
-    };
-    const selectLayer = async () => {
-      await this.photoshop.action.batchPlay([{
-        _obj: "select",
-        _target: [{ _ref: "layer", _id: layer.id }],
-        makeVisible: false,
-        _options: { dialogOptions: "dontDisplay" },
-      }], { synchronousExecution: true, modalBehavior: "execute" });
-    };
-    let current = await readNumbers();
-    const targetAspect = placement.width / placement.height;
-    const placedAspect = current.width / current.height;
-    const aspectError = Math.abs(placedAspect / targetAspect - 1);
-    if (aspectError > 0.001) {
-      throw new Error("生成图片比例与原始裁剪区域不一致，已拒绝非等比拉伸");
-    }
-    for (let pass = 0; pass < 4; pass += 1) {
-      const scaleX = placement.width / current.width * 100;
-      const scaleY = placement.height / current.height * 100;
-      const uniformScale = (scaleX + scaleY) / 2;
-      if (Math.abs(uniformScale - 100) > 0.01) {
-        await selectLayer();
-        await layer.scale(
-          uniformScale,
-          uniformScale,
-          this.photoshop.constants.AnchorPosition.TOPLEFT,
-        );
-        current = await readNumbers();
-      }
-      const translateX = placement.x - current.left;
-      const translateY = placement.y - current.top;
-      if (Math.abs(translateX) > 0.01 || Math.abs(translateY) > 0.01) {
-        await selectLayer();
-        await layer.translate(translateX, translateY);
-        current = await readNumbers();
-      }
-      const edgeError = Math.max(
-        Math.abs(current.left - placement.x),
-        Math.abs(current.top - placement.y),
-        Math.abs(current.right - (placement.x + placement.width)),
-        Math.abs(current.bottom - (placement.y + placement.height)),
-      );
-      if (edgeError <= 0.5) break;
-      if (pass === 3) throw new Error("无法校正生成图层位置");
-    }
-
-    const previousSelection = this.selectionBounds(document);
-    let snapshotSelectionLoaded = false;
-    try {
-      if (snapshot) {
-        await this.loadSnapshotSelection(document, layer, snapshot, owner);
-        snapshotSelectionLoaded = true;
-      } else {
-        await document.selection.selectRectangle({
-          left: selection.x,
-          top: selection.y,
-          right: selection.x + selection.width,
-          bottom: selection.y + selection.height,
-        });
-      }
-      await this.photoshop.action.batchPlay([
-        {
-          _obj: "select",
-          _target: [{ _ref: "layer", _id: layer.id }],
-          makeVisible: false,
-          _options: { dialogOptions: "dontDisplay" },
-        },
-        {
-          _obj: "make",
-          new: { _class: "channel" },
-          at: { _ref: "channel", _enum: "channel", _value: "mask" },
-          using: { _enum: "userMaskEnabled", _value: "revealSelection" },
-          _options: { dialogOptions: "dontDisplay" },
-        },
-      ], { synchronousExecution: true, modalBehavior: "execute" });
-      // The local Klein workflow already composites a native-resolution mask
-      // that fades only toward the inside of the original selection. Applying
-      // Photoshop's symmetric user-mask feather here would bleed generated
-      // pixels outside that selection and break pixel-precise writeback.
-    } finally {
-      // Snapshot insertion leaves the exact arbitrary selection loaded from
-      // the original PNG in place. Replacing it with its bounding rectangle
-      // would silently destroy the user's lasso/brush shape.
-      if (!snapshot || !snapshotSelectionLoaded) {
-        if (previousSelection) {
-          await document.selection.selectRectangle({
-            left: previousSelection.x,
-            top: previousSelection.y,
-            right: previousSelection.x + previousSelection.width,
-            bottom: previousSelection.y + previousSelection.height,
-          });
-        } else {
-          await document.selection.deselect();
-        }
-      }
-    }
-  }
-
-  private async loadSnapshotSelection(
-    document: any,
-    generatedLayer: any,
-    snapshot: SelectionSnapshot,
-    owner?: AssetOwner,
-  ) {
-    if (snapshot.selectionChannelName) {
-      const channel = this.findChannel(document, snapshot.selectionChannelName);
-      if (!channel) throw new Error("Photoshop 局部重绘选区通道已丢失");
-      await document.selection.load(channel);
-      await this.photoshop.action.batchPlay([{
-        _obj: "select",
-        _target: [{ _ref: "layer", _id: generatedLayer.id }],
-        makeVisible: false,
-        _options: { dialogOptions: "dontDisplay" },
-      }], { synchronousExecution: true, modalBehavior: "execute" });
-      return;
-    }
-
-    const [maskFile] = await this.writeTemporaryFiles([{
-      id: `selection-mask-${Date.now()}`,
-      bytes: snapshot.maskBytes,
-      mimeType: "image/png",
-      layerName: "Klein Selection Mask",
-    }], owner);
-    const maskLayer = await this.placeFile(document, maskFile, "Klein Selection Mask", true);
-    const number = (item: unknown) => Number(
-      typeof item === "object" && item && "value" in item
-        ? (item as { value: unknown }).value
-        : typeof item === "object" && item && "_value" in item
-          ? (item as { _value: unknown })._value
-        : item,
-    );
-    const bounds = await this.readLayerBounds(maskLayer);
-    const width = number(bounds.right) - number(bounds.left);
-    const height = number(bounds.bottom) - number(bounds.top);
-    await maskLayer.scale(
-      snapshot.cropBounds.width / width * 100,
-      snapshot.cropBounds.height / height * 100,
-      this.photoshop.constants.AnchorPosition.TOPLEFT,
-    );
-    const scaled = await this.readLayerBounds(maskLayer);
-    await maskLayer.translate(
-      snapshot.cropBounds.x - number(scaled.left),
-      snapshot.cropBounds.y - number(scaled.top),
-    );
-    await this.photoshop.action.batchPlay([
-      {
-        _obj: "set",
-        _target: [{ _ref: "channel", _property: "selection" }],
-        to: { _ref: "channel", _enum: "channel", _value: "transparencyEnum" },
-        _options: { dialogOptions: "dontDisplay" },
-      },
-      {
-        _obj: "delete",
-        _target: [{ _ref: "layer", _id: maskLayer.id }],
-        _options: { dialogOptions: "dontDisplay" },
-      },
-      {
-        _obj: "select",
-        _target: [{ _ref: "layer", _id: generatedLayer.id }],
-        makeVisible: false,
-        _options: { dialogOptions: "dontDisplay" },
-      },
-    ], { synchronousExecution: false, modalBehavior: "execute" });
-  }
-
-  private async readLayerBounds(layer: any) {
-    const fallback = layer.boundsNoEffects ?? layer.bounds;
-    if (layer.id === undefined) return fallback;
-    try {
-      const result = await this.photoshop.action.batchPlay([{
-        _obj: "get",
-        _target: [{ _ref: "layer", _id: layer.id }],
-        _options: { dialogOptions: "dontDisplay" },
-      }], { synchronousExecution: true, modalBehavior: "execute" });
-      return result?.[0]?.bounds ?? fallback;
-    } catch {
-      return fallback;
-    }
-  }
-
   private findDocument(documentId?: string) {
     const document = documentId
       ? this.photoshop.app.documents.find((item: any) => String(item.id) === documentId)
@@ -1034,14 +475,6 @@ export class UxpPhotoshopRuntime implements PhotoshopRuntime {
         : "Photoshop 当前没有打开的文档");
     }
     return document;
-  }
-
-  private findChannel(document: any, name: string) {
-    const channels = document.channels;
-    if (!channels) return undefined;
-    return Array.from(channels as any[]).find(
-      (channel: any) => String(channel.name) === name,
-    );
   }
 
   private findLayer(document: any, id: string): any {
@@ -1075,15 +508,6 @@ export class UxpPhotoshopRuntime implements PhotoshopRuntime {
     return layers.find((layer) => (
       layer.id !== undefined && !existingIds.has(String(layer.id))
     ));
-  }
-
-  private async removeSelectionChannel(document: any, name: string) {
-    try {
-      const channel = this.findChannel(document, name);
-      if (channel?.remove) await channel.remove();
-    } catch {
-      // Best-effort cleanup must not hide a successful writeback.
-    }
   }
 
   private selectionBounds(document: any): PhotoshopContext["selection"] {

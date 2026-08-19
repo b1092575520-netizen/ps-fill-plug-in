@@ -12,9 +12,9 @@ import {
 import type { GenerationDraft, PhotoshopContext } from "../src/types";
 
 const draft: GenerationDraft = {
-  mode: "inpaint",
+  mode: "text",
   prompt: "移除多余头发",
-  model: "klein-9b",
+  model: "gpt-image-2",
   resolution: "2K",
   quality: "high",
   count: 3,
@@ -23,7 +23,6 @@ const draft: GenerationDraft = {
   customHeight: 1,
   outputTarget: "current-document",
   references: [],
-  inpaintStrength: "strong",
 };
 
 const context = (documentId: string, documentName: string): PhotoshopContext => ({
@@ -157,7 +156,6 @@ describe("document session state", () => {
     ["text", "new-document"],
     ["text", "current-document"],
     ["redraw", "current-document"],
-    ["inpaint", "current-document"],
   ] as const)("routes one %s image for %s directly to the write phase", (mode, outputTarget) => {
     const singleDraft = { ...draft, mode, outputTarget, count: 1 };
     const session = createDocumentSession("doc-direct", singleDraft, context("doc-direct", "direct.psd"));

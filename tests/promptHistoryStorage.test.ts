@@ -11,15 +11,15 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("prompt history storage", () => {
   it("does not record an empty prompt", () => {
-    expect(recordPromptHistory([], "   ", "inpaint", 1)).toEqual([]);
+    expect(recordPromptHistory([], "   ", "text", 1)).toEqual([]);
   });
 
   it("deduplicates by prompt and moves the latest use to the front", () => {
     const first = recordPromptHistory([], "白色小花", "text", 1);
     const second = recordPromptHistory(first, "黑色小狗", "redraw", 2);
-    const third = recordPromptHistory(second, "白色小花", "inpaint", 3);
+    const third = recordPromptHistory(second, "白色小花", "redraw", 3);
     expect(third).toHaveLength(2);
-    expect(third[0]).toMatchObject({ prompt: "白色小花", mode: "inpaint", lastUsedAt: 3 });
+    expect(third[0]).toMatchObject({ prompt: "白色小花", mode: "redraw", lastUsedAt: 3 });
   });
 
   it("keeps at most fifty recent prompts", () => {

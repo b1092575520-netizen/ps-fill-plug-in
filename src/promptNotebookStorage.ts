@@ -59,7 +59,7 @@ function cloneNotes(notes: PromptNote[]) {
 }
 
 function isMode(value: unknown): value is GenerationMode | "all" {
-  return value === "all" || value === "text" || value === "redraw" || value === "inpaint";
+  return value === "all" || value === "text" || value === "redraw";
 }
 
 export function normalizePromptNotes(value: unknown): PromptNote[] {

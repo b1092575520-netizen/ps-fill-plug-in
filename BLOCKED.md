@@ -109,3 +109,10 @@
 - `node scripts/check-protected-dirs.cjs` 无法运行：当前恢复副本不包含脚本要求的 `compact-panel-demo` 与 `compact-panel-demo-v2`。可复现：在项目根执行该命令，分别报 `Resolve-Path ...\\compact-panel-demo` 不存在，随后摘要为 `0 files, e3b0c442...`。未修改脚本、未创建伪造目录。
 - Git 阻塞已解除：正式目录已初始化 `main`，恢复快照提交 `6c23cb4`；`git diff --check` 已通过。保护目录仍缺失。
 - Photoshop 真机验收未执行，遵守不关闭、不 Reload/Unload、不操作当前文档的边界；离线构建和测试不替代宿主验收。
+# 2026-08-19 当前阻塞：恢复源与门禁基线缺失
+
+- 复现命令：`Get-ChildItem -LiteralPath D:\ -Directory -Force`；输出仅含 `ps fill plug-in` 及无关目录，未发现 `ps fill plug-in-replay-phase4-archive`、phase2 archive 或截图中的其他恢复副本。
+- 复现命令：`node scripts/check-protected-dirs.cjs`；首个错误为 `compact-panel-demo changed: 0 files, e3b0c442...`，目录不存在。
+- 复现命令：`npm test`；当前输出为 `25 passed`、`213 passed`、`0 skipped`，低于交付要求的至少 259 项。
+- 已确认：`npm ci`、`npm run typecheck`、`npm run build:uxp`、`npm run verify:uxp`、`git diff --check` 成功。
+- 处理边界：不创建伪造保护目录，不修改保护脚本，不从截图猜测文件内容；等待真实恢复源或用户提供/恢复目录后再继续。

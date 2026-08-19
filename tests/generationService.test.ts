@@ -44,15 +44,6 @@ describe("generateFromDraft", () => {
       .toBe("请先打开 Photoshop 文档");
   });
 
-  it("requires an inpaint selection before checking its optional prompt", () => {
-    expect(realGenerationBlocker(
-      { ...draft, mode: "inpaint", prompt: "" },
-      "key",
-      true,
-      { ...context, selection: null },
-    )).toBe("请先创建选区");
-  });
-
   it("uses one direct prompt instruction for text and redraw modes", () => {
     expect(realGenerationBlocker(
       { ...draft, outputTarget: "new-document", prompt: "" },
@@ -84,7 +75,7 @@ describe("generateFromDraft", () => {
   it("derives short Chinese layer names from generation prompts", () => {
     expect(conciseLayerName("一只黑色的小狗", "text")).toBe("黑色小狗");
     expect(conciseLayerName("一朵白色小花", "text")).toBe("白色小花");
-    expect(conciseLayerName("", "inpaint")).toBe("智能填充");
+    expect(conciseLayerName("", "text")).toBe("生成图像");
   });
 
   it("builds the corrected gpt-image-2 request without quality", async () => {
@@ -135,32 +126,6 @@ describe("generateFromDraft", () => {
     );
     expect(provider.generate).toHaveBeenCalledWith(expect.objectContaining({
       size: "2400x1024",
-    }), expect.any(AbortSignal), expect.any(Function));
-  });
-
-  it("supports empty-prompt inpaint with document context and selection coordinates", async () => {
-    const provider = { generate: vi.fn(async () => []) };
-    await generateFromDraft(
-      provider,
-      {
-        ...draft,
-        mode: "inpaint",
-        prompt: "",
-        model: "gpt-image-2-oai",
-        references: [{ id: "doc", name: "doc.png", order: 0, url: "https://temp.example/doc.png" }],
-      },
-      ["auto", "gpt-image-2-oai"],
-      "key",
-      new AbortController().signal,
-      () => undefined,
-      undefined,
-      undefined,
-      context,
-    );
-    expect(provider.generate).toHaveBeenCalledWith(expect.objectContaining({
-      imageUrls: ["https://temp.example/doc.png"],
-      prompt: expect.stringMatching(/自然补全.*300.*400.*600.*500/),
-      size: "2048x1536",
     }), expect.any(AbortSignal), expect.any(Function));
   });
 
@@ -218,7 +183,7 @@ describe("generateFromDraft", () => {
 
   it("reserves reference slots for Photoshop context images", async () => {
     const provider = { generate: vi.fn() };
-    const references = Array.from({ length: 8 }, (_, index) => ({
+    const references = Array.from({ length: 9 }, (_, index) => ({
       id: `r-${index}`,
       name: `${index}.png`,
       order: index,
@@ -226,7 +191,7 @@ describe("generateFromDraft", () => {
     }));
     await expect(generateFromDraft(
       provider,
-      { ...draft, mode: "inpaint", prompt: "", references },
+      { ...draft, mode: "redraw", prompt: "改造当前画面", references },
       ["auto", "gpt-image-2-oai"],
       "key",
       new AbortController().signal,
@@ -234,7 +199,7 @@ describe("generateFromDraft", () => {
       undefined,
       undefined,
       context,
-    )).rejects.toThrow(/最多 7 张/);
+    )).rejects.toThrow(/最多 8 张/);
     expect(provider.generate).not.toHaveBeenCalled();
   });
 

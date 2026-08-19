@@ -9,7 +9,6 @@ import {
   generationModel,
   realGenerationBlocker,
 } from "./backend/generationService";
-import { LocalInpaintProvider } from "./backend/localInpaintProvider";
 import { AssetLifecycleManager, measureImageBytes, type AssetOwner } from "./assetLifecycleManager";
 import { DocumentSessionCoordinator, type DocumentTaskToken } from "./documentSessionCoordinator";
 import { PreviewCoordinator } from "./previewCoordinator";
@@ -61,15 +60,12 @@ import type {
   GenerationStage,
   GenerationJob,
   JobStatus,
-  LocalInpaintSettings,
   PhotoshopContext,
   PromptNote,
   PromptHistoryEntry,
   ReferenceImage,
-  SelectionReadStatus,
   ToastMessage,
   ThemeKey,
-  SelectionSnapshot,
 } from "./types";
 
 const INITIAL_CONTEXT: PhotoshopContext = {
@@ -93,7 +89,6 @@ const INITIAL_DRAFT: GenerationDraft = {
   customHeight: 1,
   outputTarget: "current-document",
   references: [],
-  inpaintStrength: "strong",
 };
 
 const INITIAL_PROVIDER_SNAPSHOT = createXinbaoSnapshot(false);
@@ -107,17 +102,6 @@ const INITIAL_SETTINGS: ConnectionSettings = {
 };
 
 const EMPTY_BALANCE: BalanceSnapshot = { status: "idle", unit: "积分" };
-
-export function candidateSelectionForInsert(candidate: Candidate): Candidate["selection"] | SelectionSnapshot {
-  if (candidate.generationMode !== "inpaint") return null;
-  return candidate.selectionSnapshot ?? candidate.selection ?? null;
-}
-const INITIAL_LOCAL_INPAINT_SETTINGS: LocalInpaintSettings = {
-  baseUrl: "http://127.0.0.1:8188",
-  model: "klein-9b",
-  connectionStatus: "idle",
-  experimental: true,
-};
 
 export function resetProviderConnection(
   current: ConnectionSettings,
@@ -189,14 +173,6 @@ function samePhotoshopContext(a: PhotoshopContext | null, b: PhotoshopContext) {
     && a!.height === b.height
     && a!.colorMode === b.colorMode
     && sameSelection(a!.selection, b.selection);
-}
-
-function ratioFromContext(context: PhotoshopContext | null) {
-  const selection = context?.selection;
-  if (!selection) return "—";
-  const gcd = (a: number, b: number): number => b ? gcd(b, a % b) : a;
-  const divisor = gcd(selection.width, selection.height);
-  return `${selection.width / divisor}:${selection.height / divisor}`;
 }
 
 function ratioFromDocument(context: PhotoshopContext | null) {
@@ -283,12 +259,6 @@ export function usePrototypeState() {
   const writeStatus = activeSession?.writeStatus ?? "idle";
   const writeError = activeSession?.writeError ?? null;
   const [settings, setSettingsState] = useState<ConnectionSettings>(INITIAL_SETTINGS);
-  const [localInpaintSettings, setLocalInpaintSettingsState] = useState<LocalInpaintSettings>(
-    INITIAL_LOCAL_INPAINT_SETTINGS,
-  );
-  const localHealthAbortRef = useRef<AbortController | null>(null);
-  const localInpaintSettingsRef = useRef(localInpaintSettings);
-  localInpaintSettingsRef.current = localInpaintSettings;
   const [balance, setBalance] = useState<BalanceSnapshot>(EMPTY_BALANCE);
   const balanceRef = useRef(balance);
   balanceRef.current = balance;
@@ -312,9 +282,6 @@ export function usePrototypeState() {
   const setCloudRecordsOpen = cloudRecordsController.setOpen;
   const refreshCloudTasks = cloudRecordsController.refresh;
   const loadCloudTaskImage = cloudRecordsController.loadTaskImage;
-  const [selectionReadStatus, setSelectionReadStatus] = useState<SelectionReadStatus>(
-    UXP_RUNTIME ? "reading" : INITIAL_CONTEXT.selection ? "ready" : "missing",
-  );
   const [referenceCaptureStatus, setReferenceCaptureStatus] = useState<"idle" | "capturing">("idle");
   const [credentialSaveStatus, setCredentialSaveStatus] = useState<
     "idle" | "saving" | "saved" | "error"
@@ -331,10 +298,10 @@ export function usePrototypeState() {
   const previewCoordinatorRef = useRef<PreviewCoordinator | null>(null);
   if (!previewCoordinatorRef.current) {
     previewCoordinatorRef.current = new PreviewCoordinator({
-      stage: (documentId, asset, selection) => {
+      stage: (documentId, asset) => {
         const token = documentResourcesRef.current.get(documentId)?.candidateOwner;
         const owner = token ? { ...token, ownerPrefix: "ps-fill" } : undefined;
-        return photoshopGateway.insert([asset], "current-document", documentId, selection, owner);
+        return photoshopGateway.insert([asset], "current-document", documentId, owner);
       },
       discard: (session) => photoshopGateway.discardPreview(session),
       commit: (session) => photoshopGateway.discardPreview(session, session.layerIds[0]),
@@ -349,7 +316,6 @@ export function usePrototypeState() {
     ...DEFAULT_GENERATION_SETTINGS_MEMORY,
     byMode: {},
   });
-  const selectionRefreshInFlightRef = useRef(false);
   const referenceCaptureInFlightRef = useRef(false);
   const referenceFingerprintsRef = useRef(new WeakMap<Blob, string>());
   const referenceFingerprintSequenceRef = useRef(0);
@@ -474,7 +440,6 @@ export function usePrototypeState() {
         [candidate.asset],
         candidate.outputTarget ?? "current-document",
         candidate.sourceDocumentId ?? documentId,
-        candidateSelectionForInsert(candidate),
         owner,
       );
       updateSession(documentId, (session) => ({ ...session, writeStatus: "completed", writeError: null }));
@@ -762,12 +727,11 @@ export function usePrototypeState() {
           ...defaults,
           prompt: session.draft.prompt,
           references: session.draft.references,
-          inpaintStrength: session.draft.inpaintStrength,
         },
       }];
     })));
     void saveGenerationSettingsMemory(nextMemory).catch(() => notify("恢复默认设置保存失败", "warning"));
-    notify("已恢复三种模式的默认生成设置", "success");
+    notify("已恢复两种模式的默认生成设置", "success");
   }, [notify, rememberLastSettings]);
 
   const setCount = useCallback((value: number) => {
@@ -936,59 +900,7 @@ export function usePrototypeState() {
     });
   }, [updateSession]);
 
-  const toggleSelectionMock = useCallback(() => {
-    setSelectionReadStatus("reading");
-    if (UXP_RUNTIME) {
-      void photoshopGateway.getContext()
-        .then((next) => {
-          activateDocumentContext(next);
-          setSelectionReadStatus(next.selection ? "ready" : "missing");
-        })
-        .catch((error) => {
-          setSelectionReadStatus("error");
-          notify(error instanceof Error ? error.message : "无法刷新 Photoshop 文档状态", "warning");
-        });
-      return;
-    }
-    const nextSelection = context?.selection ? null : { x: 1840, y: 1120, width: 1200, height: 800 };
-    updateActiveSession((session) => ({
-      ...session,
-      context: {
-        ...(session.context ?? INITIAL_CONTEXT),
-        selection: nextSelection,
-      },
-    }));
-    setSelectionReadStatus(nextSelection ? "ready" : "missing");
-  }, [activateDocumentContext, context?.selection, notify, updateActiveSession]);
-
-  const refreshSelection = useCallback(() => {
-    if (status === "queued" || status === "running" || selectionRefreshInFlightRef.current) return Promise.resolve();
-    selectionRefreshInFlightRef.current = true;
-    setSelectionReadStatus("reading");
-    if (!UXP_RUNTIME) {
-      const current = activeDocumentIdRef.current
-        ? documentSessionsRef.current[activeDocumentIdRef.current]?.context
-        : null;
-      setSelectionReadStatus(current?.selection ? "ready" : "missing");
-      selectionRefreshInFlightRef.current = false;
-      return Promise.resolve();
-    }
-    return photoshopGateway.getContext()
-      .then((next) => {
-        activateDocumentContext(next);
-        setSelectionReadStatus(next.selection ? "ready" : "missing");
-      })
-      .catch((error) => {
-        setSelectionReadStatus("error");
-        notify(error instanceof Error ? error.message : "无法读取 Photoshop 选区", "warning");
-      })
-      .finally(() => {
-        selectionRefreshInFlightRef.current = false;
-      });
-  }, [activateDocumentContext, notify, status]);
-
   const outputRatio = useMemo(() => {
-    if (draft.mode === "inpaint") return ratioFromContext(context);
     if (draft.mode === "redraw") return ratioFromDocument(context);
     if (draft.aspectRatio === "auto") return "API 返回比例";
     if (draft.aspectRatio === "custom") return `${draft.customWidth}:${draft.customHeight}`;
@@ -1011,13 +923,12 @@ export function usePrototypeState() {
   }, [notify]);
 
   const finishRemoteGeneration = useCallback((
-    snapshot: GenerationDraft,
-    contextSnapshot: PhotoshopContext | null,
-    ratio: string,
-    token: DocumentTaskToken,
-    assets: GeneratedImageAsset[],
-    selectionSnapshot?: SelectionSnapshot,
-  ) => {
+  snapshot: GenerationDraft,
+  contextSnapshot: PhotoshopContext | null,
+  ratio: string,
+  token: DocumentTaskToken,
+  assets: GeneratedImageAsset[],
+) => {
     if (!sessionCoordinatorRef.current.accepts(token)) return;
     const { documentId, jobId } = token;
     assetLifecycleRef.current.assertCandidateCount(assets.length);
@@ -1047,8 +958,6 @@ export function usePrototypeState() {
       asset,
       sourceDocumentId: contextSnapshot?.documentId ?? documentId,
       outputTarget: snapshot.outputTarget,
-      selection: snapshot.mode === "inpaint" ? contextSnapshot?.selection ?? null : null,
-      selectionSnapshot: snapshot.mode === "inpaint" ? selectionSnapshot : undefined,
       generationMode: snapshot.mode,
     };
     });
@@ -1079,7 +988,6 @@ export function usePrototypeState() {
       resources.previewStaging = false;
       return;
     }
-    const selection = candidateSelectionForInsert(first);
     updateSession(documentId, (current) => ({
       ...current,
       previewRevision,
@@ -1090,7 +998,7 @@ export function usePrototypeState() {
         await assetLifecycleRef.current.cleanupResource(documentId, "preview-layer", resources.previewAssetId);
         resources.previewAssetId = null;
       }
-      await previewCoordinatorRef.current!.show(first.sourceDocumentId ?? documentId, first.asset!, selection);
+      await previewCoordinatorRef.current!.show(first.sourceDocumentId ?? documentId, first.asset!);
       const currentPreview = previewCoordinatorRef.current!.current(first.sourceDocumentId ?? documentId);
       if (!currentPreview) throw new Error("Photoshop 未返回候选预览层");
       return currentPreview.session;
@@ -1160,7 +1068,7 @@ export function usePrototypeState() {
       notify("已生成图片正在写入 Photoshop，请稍后", "warning");
       return false;
     }
-    if (draft.mode !== "inpaint" && remoteRequestCoordinator.isBusy()) {
+    if (remoteRequestCoordinator.isBusy()) {
       notify("已有一个付费远程任务正在运行，请等待完成后再试", "warning");
       return false;
     }
@@ -1211,9 +1119,7 @@ export function usePrototypeState() {
         elapsedSeconds: Math.floor((Date.now() - startedAt) / 1000),
       }));
     }, 1000);
-    const canRunRealGeneration = UXP_RUNTIME && (
-      snapshot.mode === "inpaint" || settings.apiKey.trim()
-    );
+    const canRunRealGeneration = UXP_RUNTIME && settings.apiKey.trim();
     if (canRunRealGeneration) {
       const abortController = new AbortController();
       resources.abort = abortController;
@@ -1253,7 +1159,6 @@ export function usePrototypeState() {
           let liveContext = contextSnapshot;
           let requestSnapshot = snapshot;
           let liveRatio = ratio;
-          let selectionSnapshot: SelectionSnapshot | undefined;
           const needsLiveContext = snapshot.mode !== "text"
             || snapshot.outputTarget === "current-document";
           if (needsLiveContext && activeDocumentIdRef.current === documentId) {
@@ -1266,40 +1171,12 @@ export function usePrototypeState() {
             }
             const blocker = realGenerationBlocker(snapshot, settings.apiKey.trim(), true, liveContext);
             if (blocker) throw new Error(blocker);
-            liveRatio = snapshot.mode === "inpaint"
-              ? ratioFromContext(liveContext)
-              : snapshot.mode === "redraw"
-                ? ratioFromDocument(liveContext)
-                : ratio;
+            liveRatio = snapshot.mode === "redraw"
+              ? ratioFromDocument(liveContext)
+              : ratio;
             updateJob((item) => ({ ...item, context: liveContext, outputRatio: liveRatio }));
           }
-          if (snapshot.mode === "inpaint" && liveContext) {
-            updateStage("capturing");
-            selectionSnapshot = await photoshopGateway.captureInpaintSnapshot(
-              documentId,
-              localInpaintSettingsRef.current.model,
-              assetOwner(token),
-            );
-            if (selectionSnapshot.selectionChannelName) {
-              const channelName = selectionSnapshot.selectionChannelName;
-              assetLifecycleRef.current.register(
-                channelName,
-                "selection-channel",
-                assetOwner(token),
-                () => photoshopGateway.cleanupSelectionChannel(documentId, channelName),
-              );
-            }
-            if (!sessionCoordinatorRef.current.accepts(token)) {
-              await assetLifecycleRef.current.cleanupJob(documentId, token.jobId, token.revision);
-              return;
-            }
-            requestSnapshot = {
-              ...snapshot,
-              outputTarget: "current-document",
-              references: [],
-            };
-            updateJob((item) => ({ ...item, context: liveContext, draft: requestSnapshot, outputRatio: liveRatio }));
-          } else if (snapshot.mode === "redraw" && liveContext) {
+          if (snapshot.mode === "redraw" && liveContext) {
             const captures = [await photoshopGateway.captureReference(
               "document",
               documentId,
@@ -1340,7 +1217,6 @@ export function usePrototypeState() {
               settings.providerSnapshot,
             ),
           });
-          const localProvider = new LocalInpaintProvider(localInpaintSettingsRef.current);
           const sessionUploader = {
             upload: (file: Blob, fileName: string, signal: AbortSignal) => {
               let fingerprint = referenceFingerprintsRef.current.get(file);
@@ -1372,11 +1248,8 @@ export function usePrototypeState() {
             onStage: updateStage,
             context: liveContext ?? undefined,
             providerSnapshot: settings.providerSnapshot,
-            selectionSnapshot,
-            localModel: localInpaintSettingsRef.current.model,
             remoteProvider: provider,
-            localProvider,
-            remoteAudit: requestSnapshot.mode === "inpaint" ? undefined : {
+            remoteAudit: {
               localRequestId: token.jobId,
               documentId,
               mode: requestSnapshot.mode,
@@ -1389,11 +1262,9 @@ export function usePrototypeState() {
           }
           if (!sessionCoordinatorRef.current.accepts(token)) return;
           updateStage("downloading");
-          finishRemoteGeneration(requestSnapshot, liveContext, liveRatio, token, assets, selectionSnapshot);
-          if (snapshot.mode !== "inpaint") {
-            refreshBalanceRef.current(false);
-            refreshCloudTasksRef.current();
-          }
+          finishRemoteGeneration(requestSnapshot, liveContext, liveRatio, token, assets);
+          refreshBalanceRef.current(false);
+          refreshCloudTasksRef.current();
         } catch (error) {
           if ((error as Error).name === "AbortError") return;
           if (!sessionCoordinatorRef.current.accepts(token)) return;
@@ -1528,7 +1399,6 @@ export function usePrototypeState() {
           await previewCoordinatorRef.current!.show(
             candidate.sourceDocumentId ?? documentId,
             candidate.asset!,
-            candidateSelectionForInsert(candidate),
           );
           const preview = previewCoordinatorRef.current!.current(candidate.sourceDocumentId ?? documentId);
           if (!preview) throw new Error("Photoshop 未返回候选预览层");
@@ -1612,7 +1482,6 @@ export function usePrototypeState() {
     const assets = selected.flatMap((candidate) => candidate.asset ? [candidate.asset] : []);
     const resultTarget = selected[0]?.outputTarget ?? draft.outputTarget;
     const sourceDocumentId = selected[0]?.sourceDocumentId;
-    const selection = selected[0] ? candidateSelectionForInsert(selected[0]) : null;
     if (!UXP_RUNTIME || assets.length !== selected.length) {
       notify(`浏览器演示：已模拟${resultTarget === "new-document" ? "新建文档" : "插入图层"}（${selectedCount} 张）`, "info");
       return;
@@ -1632,7 +1501,6 @@ export function usePrototypeState() {
       assets,
       resultTarget,
       sourceDocumentId ?? documentId,
-      selection,
       insertionOwner,
     )
       .then(async () => {
@@ -1873,29 +1741,6 @@ export function usePrototypeState() {
     });
   }, [commitSnapshot, notify, setCloudRecordsOpen]);
 
-  const testLocalInpaint = useCallback(() => {
-    const current = localInpaintSettingsRef.current;
-    localHealthAbortRef.current?.abort();
-    const controller = new AbortController();
-    localHealthAbortRef.current = controller;
-    setLocalInpaintSettingsState((value) => ({ ...value, connectionStatus: "testing" }));
-    const isCurrent = () => localInpaintSettingsRef.current.baseUrl === current.baseUrl
-      && localInpaintSettingsRef.current.model === current.model;
-    void new LocalInpaintProvider(current).checkHealth(controller.signal).then(() => {
-      if (isCurrent()) {
-        setLocalInpaintSettingsState((value) => ({ ...value, connectionStatus: "connected" }));
-        notify("Klein / ComfyUI 连接正常", "success");
-      }
-    }).catch((error) => {
-      if ((error as Error).name === "AbortError") return;
-      if (!isCurrent()) return;
-      setLocalInpaintSettingsState((value) => ({ ...value, connectionStatus: "failed" }));
-      notify(error instanceof Error ? error.message : "Klein 连接测试失败", "warning");
-    }).finally(() => {
-      if (localHealthAbortRef.current === controller) localHealthAbortRef.current = null;
-    });
-  }, [notify]);
-
   useEffect(() => {
     let disposed = false;
     if (UXP_RUNTIME) {
@@ -1903,11 +1748,9 @@ export function usePrototypeState() {
         .then((next) => {
           if (disposed) return;
           activateDocumentContext(next);
-          setSelectionReadStatus(next.selection ? "ready" : "missing");
         })
         .catch((error) => {
           if (!disposed) setActiveDocumentId(null);
-          if (!disposed) setSelectionReadStatus("error");
           notify(error instanceof Error ? error.message : "无法读取 Photoshop 文档", "warning");
         });
     }
@@ -1957,24 +1800,6 @@ export function usePrototypeState() {
   }, [activateDocumentContext, cleanupDocumentResources]);
 
   useEffect(() => {
-    if (draft.mode !== "inpaint") return undefined;
-    const refreshOnFocus = () => { void refreshSelection(); };
-    const refreshOnVisibility = () => {
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      void refreshSelection();
-    };
-    void refreshSelection();
-    const timer = window.setInterval(refreshOnFocus, UXP_RUNTIME ? 750 : 1500);
-    window.addEventListener("focus", refreshOnFocus);
-    document.addEventListener?.("visibilitychange", refreshOnVisibility);
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener("focus", refreshOnFocus);
-      document.removeEventListener?.("visibilitychange", refreshOnVisibility);
-    };
-  }, [draft.mode, refreshSelection]);
-
-  useEffect(() => {
     if (!activeDocumentId || !activeSession) return;
     stagePreviewForDocument(activeDocumentId);
   }, [activeDocumentId, activeSession, stagePreviewForDocument]);
@@ -1982,7 +1807,6 @@ export function usePrototypeState() {
   useEffect(() => () => {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
     for (const documentId of Array.from(documentResourcesRef.current.keys())) cleanupDocumentResources(documentId);
-    localHealthAbortRef.current?.abort();
   }, [cleanupDocumentResources]);
 
   const returnToConfiguration = useCallback(() => {
@@ -2029,7 +1853,7 @@ export function usePrototypeState() {
   return {
     runtimeMode: UXP_RUNTIME ? "uxp" as const : "browser" as const,
     draft, updateDraft, setCount, setCustomDimension,
-    context, toggleSelectionMock, refreshSelection, selectionReadStatus, outputRatio, validationMessage,
+    context, outputRatio, validationMessage,
     settings, setSettings, settingsOpen, setSettingsOpen,
     cloudRecordsOpen, setCloudRecordsOpen, cloudRecords, cloudRecordsStatus, cloudRecordsError,
     cloudTaskImages, refreshCloudTasks, loadCloudTaskImage,
@@ -2037,7 +1861,6 @@ export function usePrototypeState() {
     promptNotes, promptNotesReady, savePromptNote, deletePromptNote,
     togglePromptNotePinned, reorderPromptNote,
     promptHistory, promptHistoryReady, deletePromptHistory, clearPromptHistory,
-    localInpaintSettings, setLocalInpaintSettings: setLocalInpaintSettingsState, testLocalInpaint,
     saveApiKey, credentialSaveStatus, balance, currentModelCapability,
     theme, setTheme, workspaceView, returnToConfiguration,
     generationResultStatus, writeStatus, writeError, retryGeneratedWrite, discardGeneratedResult,

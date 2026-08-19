@@ -1,4 +1,4 @@
-import type { LocalInpaintModel, OutputTarget, SelectionSnapshot } from "../types";
+import type { OutputTarget } from "../types";
 import type { AssetOwner } from "../assetLifecycleManager";
 import type {
   CapturedReference,
@@ -54,7 +54,6 @@ export class PhotoshopGateway implements PhotoshopWriter {
     assets: GeneratedImageAsset[],
     target: OutputTarget,
     documentId?: string,
-    selection?: import("../types").SelectionBounds | SelectionSnapshot | null,
     owner?: AssetOwner,
   ) {
     if (!assets.length) throw new Error("没有可插入的候选图");
@@ -70,8 +69,8 @@ export class PhotoshopGateway implements PhotoshopWriter {
         } else {
           await this.runtime.executeAsModal(async () => {
             layerIds = owner
-              ? await this.runtime.insertIntoCurrentDocument(assets, documentId, selection, owner)
-              : await this.runtime.insertIntoCurrentDocument(assets, documentId, selection);
+              ? await this.runtime.insertIntoCurrentDocument(assets, documentId, owner)
+              : await this.runtime.insertIntoCurrentDocument(assets, documentId);
             activeDocumentId = (await this.runtime.getContext()).documentId;
           }, "插入生成图层");
         }
@@ -113,33 +112,4 @@ export class PhotoshopGateway implements PhotoshopWriter {
     await this.runtime.cleanupPluginResiduals?.();
   }
 
-  async cleanupSelectionChannel(documentId: string, channelName: string) {
-    if (!channelName.startsWith("ps-fill-selection-")) return;
-    await this.enqueuePreviewModal(async () => {
-      await this.runtime.executeAsModal(
-        () => this.runtime.cleanupSelectionChannel?.(documentId, channelName) ?? Promise.resolve(),
-        "清理生成填充选区",
-      );
-    });
-  }
-
-  async captureInpaintSnapshot(
-    documentId: string | undefined,
-    model: LocalInpaintModel,
-    owner?: AssetOwner,
-  ) {
-    let snapshot: SelectionSnapshot | undefined;
-    try {
-      await this.runtime.executeAsModal(async () => {
-        snapshot = owner
-          ? await this.runtime.captureInpaintSnapshot(documentId, model, owner)
-          : await this.runtime.captureInpaintSnapshot(documentId, model);
-      }, "保存局部重绘选区");
-      if (!snapshot) throw new Error("Photoshop 未返回局部重绘快照");
-      return snapshot;
-    } finally {
-      if (owner) await this.runtime.cleanupTemporaryFiles(owner);
-      else await this.runtime.cleanupTemporaryFiles();
-    }
-  }
 }

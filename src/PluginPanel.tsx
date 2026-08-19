@@ -11,7 +11,6 @@ import {
   ReferenceImages,
   Results,
   WriteRecovery,
-  SelectionStatusBar,
 } from "./components/Shared";
 import type { PrototypeController } from "./usePrototypeState";
 import { UxpDropdownProvider } from "./components/UxpDropdown";
@@ -67,7 +66,6 @@ export function PluginPanel({ controller }: { controller: PrototypeController })
               <section className="property-section">
                 <div className="property-heading"><span>生成方式</span></div>
                 <ModeTabs controller={controller} />
-                {controller.draft.mode === "inpaint" && <SelectionStatusBar controller={controller} />}
               </section>
             </div>
             <div className="panel-section panel-section--prompt">
@@ -75,22 +73,22 @@ export function PluginPanel({ controller }: { controller: PrototypeController })
                 <PromptField controller={controller} onOpenNotebook={openNotebook} />
               </section>
             </div>
-            {controller.draft.mode !== "inpaint" && <div className="panel-section panel-section--output">
+            <div className="panel-section panel-section--output">
               <section className="property-section">
                 <div className="property-heading"><span>输出</span></div>
                 <OutputControls controller={controller} compact />
               </section>
-            </div>}
+            </div>
             <div className="panel-section panel-section--parameters">
               <section className="property-section">
                 <DetailParameters controller={controller} title="参数" showHeading={false} />
               </section>
             </div>
-            {controller.draft.mode !== "inpaint" && <div className="panel-section panel-section--references">
+            <div className="panel-section panel-section--references">
               <section className="property-section">
                 <ReferenceImages controller={controller} showHeading={false} />
               </section>
-            </div>}
+            </div>
           </>
         )}
       </div>

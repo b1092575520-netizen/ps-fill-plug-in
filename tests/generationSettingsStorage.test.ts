@@ -21,7 +21,6 @@ const draft: GenerationDraft = {
   customHeight: 3,
   outputTarget: "new-document",
   references: [{ id: "private-reference", name: "reference.png", url: "blob:private", order: 0 }],
-  inpaintStrength: "strong",
 };
 
 function browserStorage(payload: string | null = null) {

@@ -380,3 +380,29 @@
 - 最终定向门禁：PhotoshopGateway、PreviewCoordinator、AssetLifecycleManager、真实 Hook 共 4 文件/47 项通过；typecheck 退出 0；`build:uxp` 50 modules，`style.css 39.23 kB`、`plugin.js 316.51 kB`，UXP verify 与 Photoshop 27.8.0 Validate + Load 均通过。
 - 收尾：三个一次性 Photoshop 文档均无保存关闭，宿主文档数 0；UXP 临时目录中的 `ps-fill-*`、两张已付费候选副本和新文档审计副本全部删除，最终 owned temp 0、DOM Blob 0，生成测试源未包含用户文档。
 - 无文档最终复核：主界面正确门控“请先打开 Photoshop 文档”；提示词本真机显示 6 条自动历史，包含本轮 4 条文生图和 1 条图生图成功提示词且与 3 条手工收藏分页隔离。最终 `git diff --check=0`、保护目录检查=0，哈希仍为 `aa333f4b...e487` / `d83e11a3...b6d`，`uxp/.uxprc` 已删除。
+## 2026-08-18 Remove Local Inpaint
+- Goal: retain text-to-image, whole-image redraw, and ordinary reference images only.
+- Baseline: current 19-file worktree removes local inpaint/Klein code; typecheck passes.
+- Order: remove dedicated tests, update shared tests, rebuild UXP, run offline gates.
+- Risk: shared tests may still encode local selection/mask behavior; selection reference capture must remain.
+- Boundary: no Photoshop, ComfyUI, recovery-copy, or API-key operation; no Git commit.
+
+## 2026-08-19 Local Inpaint Removal Verification
+- Removed only the local inpaint/Klein/ComfyUI path: local provider, geometry/mask snapshot and writeback, selection-channel cleanup, local settings, and their dedicated tests/docs.
+- Kept remote text-to-image, whole-image image-to-image, local reference uploads, Photoshop selection screenshots as references, cloud records, balance, prompt history, candidate preview, and Photoshop layer/document writing.
+- Offline gates: `npm test` 25 files / 208 passed / 0 skipped; `npm run typecheck` passed; `npm run build:uxp` passed (49 modules); `npm run verify:uxp` passed; `git diff --check` passed.
+- Static scan found no local-inpaint/Klein/ComfyUI references in `src`, `uxp`, `README.md`, `docs`, or tests. Photoshop real-host validation was intentionally not run.
+- The protected-directory check remains independently blocked because the historical `compact-panel-demo` and `compact-panel-demo-v2` directories are absent; no placeholder directories were created.
+- 2026-08-19 UI 修复：`ModeTabs` 改为真实 `button[role=tab]`，一次点击图生图调用 `updateDraft({ mode: "redraw", outputTarget: "current-document" })`；保留 Enter/Space 键盘路径且不触发生成。
+- 主面板修复：自定义 UXP 下拉 wrapper 参与字段行 flex 宽度；参考图空状态保持双按钮横排；清空/提示词本统一高度、边框、hover/focus/disabled；设置正文和按钮字号提升。
+- 设置页修复：模型能力区显示真实模型数量、能力来源和 fetchedAt 时间；设置滚动改为 `auto`，刷新模型/测试连接按钮保留在可见的双列操作区；未恢复局部重绘设置。
+- UI 专项测试 `tests/uiWorkflow.test.tsx`：60/60 通过，覆盖一次点击、键盘激活、按钮类型、模式顺序、窄面板 CSS 和模型能力展示。
+- 全量验收：`npm test` 25 文件/213 通过/0 跳过；typecheck、UXP build、UXP verify、git diff --check、impeccable detect 均通过；UXP 49 modules，style.css 37.42 kB，plugin.js 283.12 kB。
+- 静态核验：源码无 `span role="tab"`；skip/todo/only 扫描干净；生成产物包含 mode-tab、settings-secondary-actions 和真实下拉 DOM。
+- `node scripts/check-protected-dirs.cjs` 仍因历史 `compact-panel-demo`、`compact-panel-demo-v2` 缺失失败；未伪造目录、未修改脚本。Photoshop 真机单击切换/设置页可见性尚未执行，未操作当前文档。
+# 2026-08-19 当前会话核验
+- 目标：仅交付 `D:\ps fill plug-in`，保留历史功能；不操作 Photoshop 当前文档、不读取或输出 API Key。
+- 实际路径差异：`D:\ps fill plug-in-replay-phase4-archive`、phase2 archive 及截图中的其他恢复副本当前均不在 D 盘根目录，无法作为可读恢复源。
+- 实际门禁基线：`npm ci` 成功（103 packages）；`npm test` 为 25 文件/213 测试/0 skipped；`npm run typecheck`、`npm run build:uxp`、`npm run verify:uxp`、`git diff --check` 均通过。
+- 最大风险：测试总数低于用户要求的 259，且 `node scripts/check-protected-dirs.cjs` 因缺失 `compact-panel-demo` 与 `compact-panel-demo-v2` 失败。
+- 当前决定：不伪造缺失目录、不修改保护脚本、不宣称完成；保留现有正式目录修改并提交可复现状态，等待真实恢复源或用户确认。
