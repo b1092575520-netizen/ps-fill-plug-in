@@ -439,3 +439,9 @@
 - Fixed: settings secondary actions now use a UXP-compatible flex row instead of CSS Grid; each action has a stable half-width and 30px minimum height.
 - Regression: the new test failed against the old Grid rule, then passed after the flex change. Full offline validation: 25 test files, 215 passed, 0 skipped; typecheck, UXP build (49 modules), verify, diff check, and impeccable detection passed.
 - Pending: reload the newly built UXP only when safe and confirm that both `刷新模型` and `测试连接` are visible and clickable in the settings page. No API key or Photoshop document operation is needed.
+
+# 2026-08-19 UXP final screenshot acceptance
+- Real-host evidence received: at the compact dock width, the settings page shows `刷新模型` and the connection action (`凭据正常` after testing) in one visible row; model count, capability source, and fetched time are visible.
+- The supplied main-panel screenshots show both mode states after single-click switching, centered generation count, readable output controls, and side-by-side reference actions. No generation or document mutation was performed.
+- Added interaction regression: both settings action buttons invoke their real controller commands. Full validation is green: 25 test files / 216 passed / 0 skipped, typecheck, UXP build (49 modules), verify, diff check, impeccable detection, and prohibited-test scan.
+- Acceptance status: requested UI scope is complete. The historical protected-directory check remains separately unavailable because `compact-panel-demo` and `compact-panel-demo-v2` are absent; no placeholder directories or verifier changes were made.

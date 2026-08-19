@@ -1025,6 +1025,26 @@ describe("compact workflow UI", () => {
     expect(css).toMatch(/\.settings-secondary-actions \.settings-action\s*\{[^}]*flex:\s*1 1 0[^}]*min-width:\s*0[^}]*min-height:\s*30px/s);
   });
 
+  it("wires visible settings actions to their controller commands", () => {
+    const refreshModels = vi.fn();
+    const testConnection = vi.fn();
+    let tree!: ReturnType<typeof create>;
+    act(() => { tree = create(<GlobalOverlays controller={controller({
+      settingsOpen: true,
+      refreshModels,
+      testConnection,
+    })} />); });
+    const buttons = tree.root.findAllByType("button");
+    const refresh = buttons.find((button) => button.props.onClick === refreshModels);
+    const test = buttons.find((button) => button.props.onClick === testConnection);
+    expect(refresh).toBeTruthy();
+    expect(test).toBeTruthy();
+    act(() => refresh!.props.onClick());
+    act(() => test!.props.onClick());
+    expect(refreshModels).toHaveBeenCalledOnce();
+    expect(testConnection).toHaveBeenCalledOnce();
+  });
+
   it("keeps every settings group reachable in a short UXP panel", () => {
     const css = readFileSync("src/styles.css", "utf8");
     expect(css).toMatch(/body\.uxp-shell \.settings-drawer\s*\{[^}]*height:\s*100%[^}]*min-height:\s*0[^}]*overflow:\s*hidden/s);
