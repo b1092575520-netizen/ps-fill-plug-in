@@ -406,3 +406,9 @@
 - 实际门禁基线：`npm ci` 成功（103 packages）；`npm test` 为 25 文件/213 测试/0 skipped；`npm run typecheck`、`npm run build:uxp`、`npm run verify:uxp`、`git diff --check` 均通过。
 - 最大风险：测试总数低于用户要求的 259，且 `node scripts/check-protected-dirs.cjs` 因缺失 `compact-panel-demo` 与 `compact-panel-demo-v2` 失败。
 - 当前决定：不伪造缺失目录、不修改保护脚本、不宣称完成；保留现有正式目录修改并提交可复现状态，等待真实恢复源或用户确认。
+# 2026-08-19 UI 目标续验
+- 源码与回归：`ModeTabs` 使用真实 `button[role=tab]`，两个 tab 顺序为文生图、图生图；单击图生图测试真实断言 `updateDraft({ mode: "redraw", outputTarget: "current-document" })`，键盘激活也通过。
+- 离线门禁：`npm test` 25 文件/213 测试/0 skipped；`npm run typecheck`、`npm run build:uxp`（49 modules）、`npm run verify:uxp`、`git diff --check`、impeccable detect 均通过。
+- 产物核查：`uxp/plugin.js` 含 `mode-tab`、`settings-secondary-actions`、刷新模型/测试连接文本；`uxp/style.css` 含两个自定义下拉宽度规则；manifest 为 UXP v5 且权限完整。
+- 只读真机观察：UXP Developer Tools 显示 `com.codex.generative-fill` 为 `Loaded`，Photoshop 返回“生成填充”面板选项卡；未点击 Reload/Unload，未操作当前文档，未读取 API Key。
+- 真机阻塞：Photoshop 画面捕获仍返回 `SetIsBorderRequired failed: 不支持此接口 (0x80004002)`，因此无法提供 320px 面板视觉/点击证据，不宣称真机验收通过。
