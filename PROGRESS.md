@@ -412,3 +412,8 @@
 - 产物核查：`uxp/plugin.js` 含 `mode-tab`、`settings-secondary-actions`、刷新模型/测试连接文本；`uxp/style.css` 含两个自定义下拉宽度规则；manifest 为 UXP v5 且权限完整。
 - 只读真机观察：UXP Developer Tools 显示 `com.codex.generative-fill` 为 `Loaded`，Photoshop 返回“生成填充”面板选项卡；未点击 Reload/Unload，未操作当前文档，未读取 API Key。
 - 真机阻塞：Photoshop 画面捕获仍返回 `SetIsBorderRequired failed: 不支持此接口 (0x80004002)`，因此无法提供 320px 面板视觉/点击证据，不宣称真机验收通过。
+# 2026-08-19 真机截图反例修复
+- 用户提供的 Photoshop 截图确认两个实际问题：长下拉仍被 `body.uxp-shell .field-row > span`/窄屏媒体规则压成约 58px；设置页因 `UxpDropdownProvider` 包装层导致 `> .plugin-panel` 选择器失效，主面板内容透出并覆盖 API Key 区域。
+- 修复：仅将标签选择器收窄为 `.field-row__label`，为 UXP wrapper 增加最终 flex/width 规则；设置页改用 `.prototype-stage.settings-is-open .plugin-panel` 隐藏被包装的面板。
+- 回归：本地 320px DOM 几何中长下拉宽度为 223px；设置页 `plugin-panel` 为 `display:none`，刷新模型/测试连接按钮分别约 137x30px 且可见，API 输入框不再重叠。
+- 门禁：`npm test` 25 文件/213 测试/0 skipped；`npm run typecheck`、`npm run build:uxp`、`npm run verify:uxp`、`git diff --check`、impeccable detect 均通过。

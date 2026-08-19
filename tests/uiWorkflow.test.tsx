@@ -938,6 +938,9 @@ describe("compact workflow UI", () => {
     const css = readFileSync("src/styles.css", "utf8");
     expect(css).toMatch(/\.field-row\s*>\s*\.uxp-dropdown\s*\{[^}]*flex:\s*1 1 auto[^}]*width:\s*100%/s);
     expect(css).toMatch(/\.parameter-cell\s*>\s*\.uxp-dropdown\s*\{[^}]*width:\s*100%/s);
+    expect(css).toMatch(/body\.uxp-shell \.field-row\s*>\s*\.field-row__label\s*\{[^}]*flex:\s*0 0 58px/s);
+    expect(css).toMatch(/body\.uxp-shell \.field-row\s*>\s*\.uxp-dropdown\s*\{[^}]*flex:\s*1 1 auto[^}]*width:\s*100%/s);
+    expect(css).not.toMatch(/body\.uxp-shell \.field-row\s*>\s*span\s*\{/);
     expect(css).toMatch(/\.reference-empty-actions\s*\{[^}]*display:\s*flex/s);
     expect(css).toMatch(/\.prompt-header-button\s*\{[^}]*height:\s*27px[^}]*border:\s*1px solid var\(--line\)/s);
     expect(css).toMatch(/\.prompt-header-button:disabled\s*\{[^}]*border-color:\s*var\(--line\)/s);
@@ -1011,6 +1014,7 @@ describe("compact workflow UI", () => {
     expect(css).toMatch(/body\.uxp-shell \.settings-drawer\s*\{[^}]*height:\s*100%[^}]*min-height:\s*0[^}]*overflow:\s*hidden/s);
     expect(css).toMatch(/body\.uxp-shell \.settings-body\s*\{[^}]*flex:\s*1 1 auto[^}]*min-height:\s*0[^}]*overflow-y:\s*auto/s);
     expect(css).toMatch(/body\.uxp-shell \.settings-group\s*\{[^}]*flex:\s*0 0 auto/s);
+    expect(css).toMatch(/\.prototype-stage\.settings-is-open \.plugin-panel\s*\{[^}]*display:\s*none/s);
   });
 
   it("exposes remembered settings as a checkbox and a separate reset command", () => {
