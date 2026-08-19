@@ -422,3 +422,8 @@
 - `skip/only` 扫描为 0 matches；UXP 产物已由最新源码重建。
 - `node scripts/check-protected-dirs.cjs` 仍因正式目录缺失 `compact-panel-demo` 首项失败；未创建伪造目录、未修改保护脚本。
 - Photoshop 当前仍有带未保存标记的用户文档，且未重新加载最新产物；真机 320px 单击切换和设置页视觉复核等待用户在安全时机手动 Reload 后提供证据。
+# 2026-08-19 UXP 数量控件层叠修复
+- 用户截图复现：打开自定义下拉菜单时，数量的原生 UXP `input` 绘制在菜单上方；此前为避免输入框最小宽度裁剪而设置的 `overflow: visible` 放大了该问题，且原生输入的文本居中不稳定。
+- 修复：浏览器演示仍保留直接输入；UXP 改为只读静态数字，数量继续通过真实 `-/+` 按钮调整。步进器恢复 `overflow: hidden` 并隔离层叠上下文，静态数字通过 flex/text-align 居中。
+- 回归：新增 UXP 静态数字、无原生输入和裁剪层叠上下文断言；`npm test` 25 文件/214 测试/0 skipped，`typecheck`、UXP build/verify、diff check、impeccable detect 均通过。
+- 真机边界：未 Reload/Unload、未操作当前 Photoshop 文档；新版产物等待用户在安全时机加载后复核下拉菜单与数量控件。

@@ -496,18 +496,22 @@ function CountStepper({ controller }: { controller: PrototypeController }) {
   return (
     <span className="count-stepper" role="group" aria-label="生成数量">
       <button type="button" aria-label="减少生成数量" disabled={count <= 1} onClick={() => { if (count > 1) controller.setCount(count - 1); }}>−</button>
-      <input
-        className="count-stepper__value"
-        type="text"
-        inputMode="numeric"
-        pattern="[0-9]*"
-        maxLength={1}
-        aria-label="直接输入生成数量"
-        value={count}
-        onFocus={(event) => event.currentTarget.select()}
-        onChange={(event) => setEnteredCount(event.currentTarget.value)}
-        onBlur={(event) => { event.currentTarget.value = String(count); }}
-      />
+      {controller.runtimeMode === "uxp" ? (
+        <span className="count-stepper__value count-stepper__value--static" aria-live="polite">{count}</span>
+      ) : (
+        <input
+          className="count-stepper__value"
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          maxLength={1}
+          aria-label="直接输入生成数量"
+          value={count}
+          onFocus={(event) => event.currentTarget.select()}
+          onChange={(event) => setEnteredCount(event.currentTarget.value)}
+          onBlur={(event) => { event.currentTarget.value = String(count); }}
+        />
+      )}
       <button type="button" aria-label="增加生成数量" disabled={count >= 4} onClick={() => { if (count < 4) controller.setCount(count + 1); }}>+</button>
     </span>
   );

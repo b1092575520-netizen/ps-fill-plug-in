@@ -1030,13 +1030,19 @@ body.uxp-shell .prompt-field textarea { height: 72px; min-height: 72px; max-heig
 body.uxp-shell .count-stepper {
   display: flex;
   width: 100%;
-  overflow: visible;
+  overflow: hidden;
+  isolation: isolate;
 }
 body.uxp-shell .count-stepper button { flex: 0 0 28px; }
-body.uxp-shell .count-stepper__value {
-  flex: 1 1 auto;
-  min-width: 40px;
-  appearance: none;
+body.uxp-shell .count-stepper__value--static {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: #191a1c;
+  text-align: center;
 }
 body.uxp-shell .plugin-panel.is-resizing,
 body.uxp-shell .plugin-panel.is-resizing * { animation: none !important; transition: none !important; }

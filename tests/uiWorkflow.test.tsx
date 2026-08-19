@@ -330,21 +330,31 @@ describe("compact workflow UI", () => {
     act(() => tree.unmount());
   });
 
-  it("lets the UXP count input absorb its native minimum width without clipping either button", () => {
+  it("keeps the UXP count stepper inside its own clipped stacking context", () => {
     const css = readFileSync("src/styles.css", "utf8");
     expect(css).toMatch(/body\.uxp-shell \.count-stepper\s*\{[^}]*display:\s*flex/s);
-    expect(css).toMatch(/body\.uxp-shell \.count-stepper\s*\{[^}]*width:\s*100%[^}]*overflow:\s*visible/s);
+    expect(css).toMatch(/body\.uxp-shell \.count-stepper\s*\{[^}]*width:\s*100%[^}]*overflow:\s*hidden[^}]*isolation:\s*isolate/s);
     expect(css).toMatch(/body\.uxp-shell \.count-stepper button\s*\{[^}]*flex:\s*0 0 28px/s);
-    expect(css).toMatch(/body\.uxp-shell \.count-stepper__value\s*\{[^}]*flex:\s*1 1 auto[^}]*min-width:\s*40px[^}]*appearance:\s*none/s);
+    expect(css).toMatch(/body\.uxp-shell \.count-stepper__value--static\s*\{[^}]*flex:\s*1 1 0[^}]*align-items:\s*center[^}]*justify-content:\s*center[^}]*text-align:\s*center/s);
   });
 
-  it("renders the generation count with a plain UXP-safe text input", () => {
+  it("keeps direct count entry in the browser demo", () => {
     const tree = create(<DetailParameters controller={controller()} />);
     const value = tree.root.findByProps({ className: "count-stepper__value" });
     expect(value.type).toBe("input");
     expect(value.props.type).toBe("text");
     expect(value.props.inputMode).toBe("numeric");
     expect(value.props.maxLength).toBe(1);
+    act(() => tree.unmount());
+  });
+
+  it("uses a centered static count in UXP so native input paint cannot cover menus", () => {
+    const tree = create(<DetailParameters controller={controller({ runtimeMode: "uxp", draft: { ...draft, count: 2 } })} />);
+    const value = tree.root.findByProps({ className: "count-stepper__value count-stepper__value--static" });
+    expect(value.type).toBe("span");
+    expect(value.props["aria-live"]).toBe("polite");
+    expect(value.children).toEqual(["2"]);
+    expect(tree.root.findAllByProps({ "aria-label": "直接输入生成数量" })).toHaveLength(0);
     act(() => tree.unmount());
   });
 
