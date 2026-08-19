@@ -1048,8 +1048,8 @@ body.uxp-shell .plugin-panel.is-resizing,
 body.uxp-shell .plugin-panel.is-resizing * { animation: none !important; transition: none !important; }
 
 /* Keep compact UXP controls legible at the narrowest dock width. */
-.settings-secondary-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-.settings-secondary-actions .settings-action { min-width: 0; min-height: 30px; padding: 0 6px; white-space: nowrap; }
+.settings-secondary-actions { display: flex; gap: 6px; }
+.settings-secondary-actions .settings-action { flex: 1 1 0; min-width: 0; min-height: 30px; padding: 0 6px; white-space: nowrap; }
 .settings-action--primary { border-color: rgba(125,108,255,.45); background: var(--accent-soft); color: #d8d3ff; }
 .settings-action--compact { align-self: flex-start; min-height: 29px; padding: 0 10px; }
 .generation-memory-settings { display: flex; flex-direction: column; gap: 6px; padding-top: 2px; }

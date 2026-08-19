@@ -433,3 +433,9 @@
 - Validation: `npm run typecheck`, `npm test` (25 files, 214 passed, 0 skipped), `npm run build:uxp` (49 modules), `npm run verify:uxp`, `git diff --check`, and impeccable detection all passed.
 - Blocked: `node scripts/check-protected-dirs.cjs` fails because `compact-panel-demo` is absent. No placeholder directory or script change was made.
 - Next: user reloads the current `uxp/manifest.json` build only when safe, then confirms at about 320px that count text stays centered and does not cover opened output-ratio/resolution menus. Do not generate, read an API key, or alter the Photoshop document.
+
+# 2026-08-19 UXP screenshot follow-up
+- Real-host evidence: user screenshots confirm one-click text-to-image to image-to-image activation, centered count text, and readable main-panel control labels. No generation was initiated.
+- Fixed: settings secondary actions now use a UXP-compatible flex row instead of CSS Grid; each action has a stable half-width and 30px minimum height.
+- Regression: the new test failed against the old Grid rule, then passed after the flex change. Full offline validation: 25 test files, 215 passed, 0 skipped; typecheck, UXP build (49 modules), verify, diff check, and impeccable detection passed.
+- Pending: reload the newly built UXP only when safe and confirm that both `刷新模型` and `测试连接` are visible and clickable in the settings page. No API key or Photoshop document operation is needed.

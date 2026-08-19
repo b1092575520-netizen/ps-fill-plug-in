@@ -1019,6 +1019,12 @@ describe("compact workflow UI", () => {
     expect(html).toMatch(/settings-secondary-actions[\s\S]*刷新模型[\s\S]*aria-label="测试连接"/);
   });
 
+  it("keeps the secondary settings actions visible in UXP with a flex row", () => {
+    const css = readFileSync("src/styles.css", "utf8");
+    expect(css).toMatch(/\.settings-secondary-actions\s*\{[^}]*display:\s*flex[^}]*gap:\s*6px/s);
+    expect(css).toMatch(/\.settings-secondary-actions \.settings-action\s*\{[^}]*flex:\s*1 1 0[^}]*min-width:\s*0[^}]*min-height:\s*30px/s);
+  });
+
   it("keeps every settings group reachable in a short UXP panel", () => {
     const css = readFileSync("src/styles.css", "utf8");
     expect(css).toMatch(/body\.uxp-shell \.settings-drawer\s*\{[^}]*height:\s*100%[^}]*min-height:\s*0[^}]*overflow:\s*hidden/s);
