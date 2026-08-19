@@ -427,3 +427,9 @@
 - 修复：浏览器演示仍保留直接输入；UXP 改为只读静态数字，数量继续通过真实 `-/+` 按钮调整。步进器恢复 `overflow: hidden` 并隔离层叠上下文，静态数字通过 flex/text-align 居中。
 - 回归：新增 UXP 静态数字、无原生输入和裁剪层叠上下文断言；`npm test` 25 文件/214 测试/0 skipped，`typecheck`、UXP build/verify、diff check、impeccable detect 均通过。
 - 真机边界：未 Reload/Unload、未操作当前 Photoshop 文档；新版产物等待用户在安全时机加载后复核下拉菜单与数量控件。
+# 2026-08-19 UXP count stepper menu bleed follow-up
+- Completed: UXP count now renders as a centered static span; browser mode retains direct numeric entry. This prevents native UXP input paint from appearing above dropdown menus.
+- Completed: regression coverage proves the UXP static value, clipping/isolation, browser entry, and one-click `ModeTabs` redraw transition.
+- Validation: `npm run typecheck`, `npm test` (25 files, 214 passed, 0 skipped), `npm run build:uxp` (49 modules), `npm run verify:uxp`, `git diff --check`, and impeccable detection all passed.
+- Blocked: `node scripts/check-protected-dirs.cjs` fails because `compact-panel-demo` is absent. No placeholder directory or script change was made.
+- Next: user reloads the current `uxp/manifest.json` build only when safe, then confirms at about 320px that count text stays centered and does not cover opened output-ratio/resolution menus. Do not generate, read an API key, or alter the Photoshop document.
