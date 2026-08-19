@@ -417,3 +417,8 @@
 - 修复：仅将标签选择器收窄为 `.field-row__label`，为 UXP wrapper 增加最终 flex/width 规则；设置页改用 `.prototype-stage.settings-is-open .plugin-panel` 隐藏被包装的面板。
 - 回归：本地 320px DOM 几何中长下拉宽度为 223px；设置页 `plugin-panel` 为 `display:none`，刷新模型/测试连接按钮分别约 137x30px 且可见，API 输入框不再重叠。
 - 门禁：`npm test` 25 文件/213 测试/0 skipped；`npm run typecheck`、`npm run build:uxp`、`npm run verify:uxp`、`git diff --check`、impeccable detect 均通过。
+# 2026-08-19 产物最终复核
+- 当前提交 `031ee0f` 工作树干净；重新执行 `typecheck`、`npm test`（25/213/0 skipped）、`build:uxp`（49 modules）、`verify:uxp`、`git diff --check`、impeccable detect，全部通过。
+- `skip/only` 扫描为 0 matches；UXP 产物已由最新源码重建。
+- `node scripts/check-protected-dirs.cjs` 仍因正式目录缺失 `compact-panel-demo` 首项失败；未创建伪造目录、未修改保护脚本。
+- Photoshop 当前仍有带未保存标记的用户文档，且未重新加载最新产物；真机 320px 单击切换和设置页视觉复核等待用户在安全时机手动 Reload 后提供证据。
