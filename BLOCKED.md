@@ -1,5 +1,17 @@
 # 待裁决与外部阻塞
 
+## 2026-08-23 任务0当前数字差异
+- 目标基线写明 `26 个测试文件、236 项通过、0 skipped`；当前正式目录实测 `npm test` 为 `26 passed / 237 passed / 0 skipped`，高出 1 项，未删除、跳过或放宽测试。
+- 按目标要求记录差异后继续；后续以当前命令原始输出为准，不修改测试阈值或验收脚本。
+
+## 2026-08-23 真机加载实例仍不可证明
+- 当前正式离线门禁与云端定向回归均绿，但只读 UDT `Plugin list` 返回 `pluginCount=24`、`targetPresent=false`、`targetPath=null`；workspace 配置与正式 manifest 路径一致，却没有 `uxp/.uxprc` 开发会话。
+- 因此无法按任务2读取本次 Photoshop 页面 `.cloud-records-page` 的 `data-cloud-records-status`、记录数、错误状态或控制台异常，也无法分别取得 pending/401/403/200空数组/200任务/缩略图404 的宿主证据。
+- 这与用户最新截图“标题和按钮可见、正文完全空白”相矛盾于当前源码的强制状态渲染，当前最小根因假设是截图对应实例不是正式 `D:\ps fill plug-in\uxp` 构建，仍需宿主加载来源证据裁决。
+- Photoshop 最新 UXP 日志（`UXPLogs_2026-08-23_10-25-35_294186.log`）只读可见两次 `Devtools: Removing existing plugin with id com.codex.generative-fill`（12:33:33、12:52:16），其后没有该插件新的 Load/Debug 记录；这支持“当前截图不是本次构建有效 session”的判断，但仍不能替代页面 DOM 证据。
+- 当前工作树仍有任务外的既有脏改动（`src/backend/photoshopGateway.ts`、`src/documentSessionState.ts`、`src/remoteRequestLedger.ts`、`src/styles.css`、`src/usePrototypeState.ts` 及其测试）；本轮未修改、未暂存、未覆盖这些文件。
+- 额外门禁复测：`node scripts/check-protected-dirs.cjs` 仍以 exit 1 失败，首个错误为 `Resolve-Path ...\compact-panel-demo` 不存在，随后摘要 `compact-panel-demo changed: 0 files, e3b0c442...`；未创建伪造保护目录，未修改脚本。
+
 ## 当前状态
 
 - 2026-08-15 下拉菜单布局缺陷已修复：截图暴露的“打开菜单推动后续按钮”和无用 `⌄` 已通过绝对定位菜单、无箭头触发器修正；定向 64/64 与完整 259 测试均绿。尚未用新构建在当前用户未保存文档上重载截图，避免再次抢桌面；真机最新视觉仍需安全测试文档补证。

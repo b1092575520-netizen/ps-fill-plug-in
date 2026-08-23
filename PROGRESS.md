@@ -6,6 +6,30 @@
 - 当前基线：phase4 typecheck 通过；npm test 259 项中 18 项失败，失败集中在 manifest 与 UXP CSS 回归。
 - 安全边界：不操作 Photoshop，不读取 API Key，不修改 D 盘恢复副本，不删除任何恢复目录。
 
+## 2026-08-23 任务0续跑原始输出摘要
+```text
+> npm test
+Test Files 26 passed (26)
+Tests 237 passed (237)
+0 skipped
+> npm run typecheck
+tsc --noEmit (exit 0)
+> npm run build:uxp
+49 modules transformed; uxp/style.css 38.19 kB; uxp/plugin.js 286.26 kB
+UXP build verified: classic IIFE entry, valid manifest, and real DOM symbol UI icons
+> npm run verify:uxp
+UXP build verified: classic IIFE entry, valid manifest, and real DOM symbol UI icons
+> git diff --check
+exit 0 (only Windows LF->CRLF warnings)
+```
+- 产物：`uxp/plugin.js` 286258 bytes、`uxp/style.css` 38192 bytes（2026-08-23 13:06:28），`uxp/manifest.json` 672 bytes（2026-08-18 18:31:28）。`uxp-static` 当前仅有 `index.html`/`manifest.json`，正式 Photoshop 路径仍为 `D:\ps fill plug-in\uxp`。
+
+## 2026-08-23 任务1/2续跑
+- 定向反向回归：`npm test -- --run tests/uiWorkflow.test.tsx tests/useCloudRecords.test.tsx tests/provider.test.ts` 输出 `Test Files 3 passed (3)`、`Tests 105 passed (105)`、`0 skipped`。
+- 覆盖范围：idle/loading/ready/error/未知状态、30秒超时、401/403/非法 envelope、心宝 `{ object, days, items }`、数字/字符串时间戳、官方历史 URL/Authorization/Accept、缩略图失败仍显示任务文字卡片、取消/身份切换。
+- 只读 UDT 查询输出：`{"appClient":"PS","pluginCount":24,"targetPresent":false,"targetPath":null}`。Photoshop PID `22176` 为响应状态，端口 `14001` 可用；UDT workspace 配置虽指向 `D:\ps fill plug-in\uxp\manifest.json`，但 `uxp/.uxprc exists: False`，当前没有该插件有效开发 session。
+- 结论：接口、状态机、React 和正式构建离线证据齐全；当前 Photoshop 真机“已加载内容/DOM/HTTP 状态”证据仍缺失，不能声称修复完成。
+
 ## 2026-08-18 恢复阶段结果
 - 已完成：C 盘临时副本建立；补齐 `uxp-static/manifest.json`；修复 Klein 4B 原生选区路径和历史 UXP CSS 回归。
 - 结构补齐：从 phase2/phase4 内容哈希一致的依赖锁定文件恢复 `package-lock.json`（SHA256 `21824dc9...feb64`），已同步正式目录并由 `npm ci` 安装 103 个依赖包。
