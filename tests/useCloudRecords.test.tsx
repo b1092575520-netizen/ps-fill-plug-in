@@ -141,6 +141,57 @@ describe("useCloudRecords", () => {
     act(() => tree.unmount());
   });
 
+  it("turns a hanging history request into a visible timeout error", async () => {
+    vi.useFakeTimers();
+    try {
+      let current!: CloudRecordsController;
+      let tree!: ReturnType<typeof create>;
+      const loadRecords = vi.fn(() => new Promise<CloudTaskRecord[]>(() => undefined));
+      await act(async () => {
+        tree = create(<Harness apiKey="key" expose={(value) => { current = value; }} loadRecords={loadRecords} />);
+      });
+      act(() => current.setOpen(true));
+      await act(async () => {
+        vi.advanceTimersByTime(30_000);
+        await Promise.resolve();
+      });
+      expect(current.status).toBe("error");
+      expect(current.error).toBe("云端记录请求超时，请检查网络后重试");
+      act(() => tree.unmount());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("invalidates an in-flight request when the API key is cleared", async () => {
+    const requests: Array<{ resolve: (records: CloudTaskRecord[]) => void; signal: AbortSignal }> = [];
+    const loadRecords = vi.fn((_identity: { baseUrl: string; apiKey: string }, signal: AbortSignal) => (
+      new Promise<CloudTaskRecord[]>((resolve) => requests.push({ resolve, signal }))
+    ));
+    let current!: CloudRecordsController;
+    let tree!: ReturnType<typeof create>;
+    await act(async () => {
+      tree = create(<Harness apiKey="key-a" expose={(value) => { current = value; }} loadRecords={loadRecords} />);
+    });
+    act(() => current.setOpen(true));
+    await flush();
+    expect(requests).toHaveLength(1);
+
+    await act(async () => {
+      tree.update(<Harness apiKey="" expose={(value) => { current = value; }} loadRecords={loadRecords} />);
+    });
+    expect(requests[0].signal.aborted).toBe(true);
+    expect(current.status).toBe("error");
+    expect(current.error).toBe("请先在设置中保存 API Key");
+
+    await act(async () => requests[0].resolve([{
+      taskId: "stale-after-clear", model: "model", status: "succeeded", createdAt: null,
+      completedAt: null, thumbnailUrl: null, origin: "plugin",
+    }]));
+    expect(current.records).toEqual([]);
+    act(() => tree.unmount());
+  });
+
   it("automatically loads the first page with at most three image chains in flight", async () => {
     const pending: Array<() => void> = [];
     let active = 0;

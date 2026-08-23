@@ -573,6 +573,48 @@ describe("compact workflow UI", () => {
       loadCloudTaskImage: vi.fn(),
     })} />);
     expect(empty).toContain("最近 3 天没有云端生图记录");
+
+    const staleController = controller({
+      cloudRecordsStatus: undefined,
+      cloudRecordsError: null,
+      cloudRecords: [],
+      cloudTaskImages: {},
+      refreshCloudTasks: vi.fn(),
+      setCloudRecordsOpen,
+      loadCloudTaskImage: vi.fn(),
+    });
+    const stale = renderToStaticMarkup(<CloudRecordsPage controller={staleController} />);
+    expect(stale).toContain("正在读取云端记录");
+    expect(stale).toContain('data-cloud-records-status="loading"');
+
+    const unknown = renderToStaticMarkup(<CloudRecordsPage controller={controller({
+      cloudRecordsStatus: "pending" as never,
+      cloudRecordsError: null,
+      cloudRecords: [{
+        taskId: "pending-task",
+        model: "gpt-image-2-oai",
+        status: "pending",
+        createdAt: null,
+        completedAt: null,
+        thumbnailUrl: null,
+        origin: "external-or-unknown",
+      }],
+      cloudTaskImages: {},
+      refreshCloudTasks: vi.fn(),
+      setCloudRecordsOpen,
+      loadCloudTaskImage: vi.fn(),
+    })} />);
+    expect(unknown).toContain("正在读取云端记录");
+    expect(unknown).toContain("pending-task");
+
+    expect(() => renderToStaticMarkup(<CloudRecordsPage controller={controller({
+      cloudRecordsStatus: "ready",
+      cloudRecords: undefined,
+      cloudTaskImages: undefined,
+      refreshCloudTasks: vi.fn(),
+      setCloudRecordsOpen,
+      loadCloudTaskImage: vi.fn(),
+    })} />)).not.toThrow();
   });
 
   it("automatically requests visible cloud thumbnails and exposes concrete retry errors", () => {
@@ -609,6 +651,10 @@ describe("compact workflow UI", () => {
       setCloudRecordsOpen,
       loadCloudTaskImage,
     })} />); });
+    const cardMeta = tree.root.findByProps({ className: "cloud-task__meta" });
+    expect(cardMeta.findByType("strong").children).toContain("gpt-image-2-oai");
+    expect(cardMeta.findByProps({ className: "cloud-task__status is-succeeded" }).children).toContain("succeeded");
+    expect(cardMeta.findByType("code").children).toContain("task-plugin-1");
     expect(tree.root.findByProps({ className: "cloud-task__error" }).findAllByType("span").some((node) => node.children.includes("图片下载失败（503）"))).toBe(true);
     act(() => tree.root.findByProps({ "aria-label": "重试任务 task-plugin-1 图片" }).props.onClick());
     expect(loadCloudTaskImage).toHaveBeenCalledTimes(2);
@@ -806,6 +852,7 @@ describe("compact workflow UI", () => {
       elapsedSeconds: 7,
     })} />);
     expect(html).toContain("供应商生成中 · 42% · 00:07");
+    expect(html).toContain('style="width:42%"');
     expect(html).toContain(">取消</button>");
     expect(html).not.toContain('class="generate-button"');
   });
@@ -1330,6 +1377,11 @@ describe("compact workflow UI", () => {
     const css = readFileSync("src/styles.css", "utf8");
     const source = readFileSync("src/components/Shared.tsx", "utf8");
     expect(source).toContain('className="reference-remove-glyph"');
+    expect(source).toContain('className="references-actions__buttons"');
+    expect(css).toMatch(/\.references-actions__buttons\s*\{[^}]*display:\s*flex[^}]*gap:\s*5px/s);
+    expect(css).toMatch(/\.references-actions \.reference-clear/);
+    expect(css).toMatch(/\.reference-item > \.reference-remove\s*\{[^}]*position:\s*absolute[^}]*top:\s*3px[^}]*right:\s*3px/s);
+    expect(css).toMatch(/\.reference-remove-glyph\s*\{[^}]*display:\s*inline-flex[^}]*font-size:\s*11px/s);
     expect(css).toMatch(/\.reference-item > \.reference-remove\s*\{[^}]*width:\s*14px[^}]*height:\s*14px[^}]*border-radius:\s*50%/s);
     expect(css).toMatch(/\.reference-remove-glyph::before[^}]*height:\s*1px[^}]*background:/s);
     expect(css).toMatch(/\.reference-remove:hover\s*\{[^}]*background:/s);

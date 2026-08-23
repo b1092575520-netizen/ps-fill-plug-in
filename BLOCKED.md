@@ -116,3 +116,10 @@
 - 复现命令：`npm test`；当前输出为 `25 passed`、`213 passed`、`0 skipped`，低于交付要求的至少 259 项。
 - 已确认：`npm ci`、`npm run typecheck`、`npm run build:uxp`、`npm run verify:uxp`、`git diff --check` 成功。
 - 处理边界：不创建伪造保护目录，不修改保护脚本，不从截图猜测文件内容；等待真实恢复源或用户提供/恢复目录后再继续。
+# 2026-08-23 Cloud records Photoshop evidence blocker
+
+- Offline reproduction and repair are complete: the cloud-records page now always renders an explicit idle/loading/ready/error/unknown state, task text cards independent of thumbnails, and a fallback for legacy UXP controller fields that previously caused a `cloudRecords.length` render exception.
+- Current evidence: `npm test` 26 files / 237 passed / 0 skipped; typecheck, UXP build/verify, and `git diff --check` pass. Official Xinbao list fixture, numeric/string timestamps, task envelope, 401/403, invalid response, timeout, cancellation, and thumbnail-failure card tests are green.
+- External blocker: this session has no usable Photoshop UXP console or desktop interaction tool. Read-only PowerShell confirms Photoshop PID 22176 is responding and the formal target files exist, but cannot prove the currently loaded manifest/main/plugin path, `data-cloud-records-status`, record count, HTTP status, or live 200/pending/401/403/thumbnail-404 states without reloading or driving Photoshop.
+- Reproduction commands retained: `npm test -- --run tests/uiWorkflow.test.tsx`; `npm test -- --run tests/useCloudRecords.test.tsx`; `npm test -- --run tests/provider.test.ts`; `npm run build:uxp`; `npm run verify:uxp`.
+- Required next evidence: in Photoshop, without closing it, changing/saving the current document, or generating, load `D:\ps fill plug-in\uxp\manifest.json`, open cloud records, and capture status/record-count/error observations for pending, 401/403, 200 empty, 200 with task, and thumbnail 404. Do not output or log the API key or response body.

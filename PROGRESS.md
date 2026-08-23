@@ -15,6 +15,22 @@
 - Git：正式目录已初始化 `main`，恢复快照提交 `6c23cb4`，工作树当前干净。
 - 下一步：补齐/裁决保护目录摘要后重跑该脚本；Photoshop 真机验收仍未执行，不宣称真机完成。
 
+# Cloud records blank-page investigation (2026-08-23)
+- Baseline commands: `npm test` = 26 files / 236 passed / 0 skipped; `npm run typecheck` passed; `npm run build:uxp` passed (49 modules); `npm run verify:uxp` passed; `git diff --check` passed.
+- UXP artifacts: `uxp/plugin.js` 286271 bytes and `uxp/style.css` 38192 bytes, both timestamped 2026-08-23 11:39; `uxp/manifest.json` 672 bytes, timestamped 2026-08-18 18:31.
+- `uxp-static` contains `manifest.json` (672 bytes) and `plugin.js` (1455 bytes); formal Photoshop target remains `D:\ps fill plug-in\uxp`.
+- Worktree has pre-existing uncommitted changes across runtime and tests; they are preserved. This investigation is limited to the approved cloud-record files.
+- Order: reproduce state/UI failures -> verify official task envelope and headers -> fix minimal state/render defects -> rebuild -> offline gates -> Photoshop evidence.
+- Maximum risk: Photoshop may still load an older UXP artifact, or thumbnail/detail failures may hide task text; no API key or document operation is permitted.
+
+# Cloud records investigation result (2026-08-23)
+- Red reproduction: the new legacy-controller fixture failed with `TypeError: Cannot read properties of undefined (reading 'length')` from the cloud-records "load more" check; this was the concrete blank-body failure. A thumbnail-error fixture also initially lacked a robust text assertion.
+- Fix: `CloudRecordsPage` consistently uses normalized `records`/`images` fallbacks and the load-more condition now uses `records.length`; task metadata remains rendered before/independent of thumbnail/detail loading.
+- Regression coverage: explicit idle/loading/ready/error/unknown status text, pending task card text, invalid response, 401/403, official `{ object, days, items }` envelope, numeric/string timestamps, timeout at 30 seconds, request cancellation/identity switching, and thumbnail failure with retry text.
+- Green reversal: `npm test -- --run tests/uiWorkflow.test.tsx` = 63 passed; `tests/useCloudRecords.test.tsx` = 6 passed; `tests/provider.test.ts` = 36 passed; full `npm test` = 26 files / 237 passed / 0 skipped.
+- Build: `npm run build:uxp` regenerated formal `uxp/plugin.js` (286258 bytes, 2026-08-23 12:42:12) and `uxp/style.css` (38192 bytes); `npm run verify:uxp` passed. No API key was printed or placed in a URL.
+- Remaining: Photoshop live verification is blocked; see the new top entry in `BLOCKED.md`. Do not claim the currently loaded host has the new artifact until a safe live observation exists.
+
 # 后端与 Photoshop 接入进度
 
 ## 2026-08-15 当前续验收记录

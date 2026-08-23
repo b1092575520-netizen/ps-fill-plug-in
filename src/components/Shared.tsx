@@ -113,48 +113,55 @@ function cloudTaskTime(value: number | null) {
 export function CloudRecordsPage({ controller }: { controller: PrototypeController }) {
   const [visibleCount, setVisibleCount] = useState(12);
   const requestedTaskIdsRef = useRef(new Set<string>());
-  const visibleRecords = controller.cloudRecords.slice(0, visibleCount);
+  // Keep the page useful even when an older UXP host has not populated the
+  // newly-added controller fields yet. A blank page hides the real failure.
+  const status = controller.cloudRecordsStatus ?? "loading";
+  const records = Array.isArray(controller.cloudRecords) ? controller.cloudRecords : [];
+  const images = controller.cloudTaskImages ?? {};
+  const visibleRecords = records.slice(0, visibleCount);
   const visibleTaskIds = visibleRecords.map((task) => task.taskId).join("|");
   useEffect(() => {
-    if (controller.cloudRecordsStatus === "loading") {
+    if (status === "loading") {
       requestedTaskIdsRef.current.clear();
       setVisibleCount(12);
       return;
     }
-    if (controller.cloudRecordsStatus !== "ready") return;
+    if (status !== "ready") return;
     visibleRecords.forEach((task) => {
-      if (controller.cloudTaskImages[task.taskId] || requestedTaskIdsRef.current.has(task.taskId)) return;
+      if (images[task.taskId] || requestedTaskIdsRef.current.has(task.taskId)) return;
       requestedTaskIdsRef.current.add(task.taskId);
       controller.loadCloudTaskImage(task);
     });
-  }, [controller.cloudRecordsStatus, controller.cloudTaskImages, controller.loadCloudTaskImage, visibleTaskIds]);
+  }, [status, images, controller.loadCloudTaskImage, visibleTaskIds]);
+  const knownStatus = status === "idle" || status === "loading" || status === "ready" || status === "error";
   return (
-    <section className="cloud-records-page">
+    <section className="cloud-records-page" data-cloud-records-status={status}>
       <header className="cloud-records__header">
         <span><strong>云端生图记录</strong><small>最近 3 天</small></span>
         <div>
-          <button type="button" aria-label="刷新云端生图记录" onClick={controller.refreshCloudTasks} disabled={controller.cloudRecordsStatus === "loading"}>
-            <UxpIcon name="refresh" className={controller.cloudRecordsStatus === "loading" ? "spin" : ""} />
+          <button type="button" aria-label="刷新云端生图记录" onClick={controller.refreshCloudTasks} disabled={status === "loading"}>
+            <UxpIcon name="refresh" className={status === "loading" ? "spin" : ""} />
           </button>
           <button type="button" aria-label="返回生成界面" onClick={() => controller.setCloudRecordsOpen(false)}>
             <UxpIcon name="close" />
           </button>
         </div>
       </header>
-      {controller.cloudRecordsStatus === "idle" && <div className="cloud-records__state">正在准备云端记录…</div>}
-      {controller.cloudRecordsStatus === "loading" && <div className="cloud-records__state">正在读取云端记录…</div>}
-      {controller.cloudRecordsStatus === "error" && (
+      {status === "idle" && <div className="cloud-records__state" aria-live="polite">正在准备云端记录…</div>}
+      {status === "loading" && <div className="cloud-records__state" aria-live="polite">正在读取云端记录…</div>}
+      {status === "error" && (
         <div className="cloud-records__state is-error">
-          <span>{controller.cloudRecordsError}</span>
+          <span>{controller.cloudRecordsError || "云端记录读取失败"}</span>
           <button type="button" onClick={controller.refreshCloudTasks}>重试</button>
         </div>
       )}
-      {controller.cloudRecordsStatus === "ready" && controller.cloudRecords.length === 0 && (
+      {status === "ready" && records.length === 0 && (
         <div className="cloud-records__state">最近 3 天没有云端生图记录</div>
       )}
+      {!knownStatus && <div className="cloud-records__state" aria-live="polite">正在读取云端记录…</div>}
       <div className="cloud-records__list">
         {visibleRecords.map((task) => {
-          const image = controller.cloudTaskImages[task.taskId];
+          const image = images[task.taskId];
           return (
             <article className="cloud-task" key={task.taskId}>
               <div className="cloud-task__preview">
@@ -175,7 +182,7 @@ export function CloudRecordsPage({ controller }: { controller: PrototypeControll
           );
         })}
       </div>
-      {visibleCount < controller.cloudRecords.length && (
+      {visibleCount < records.length && (
         <button className="cloud-records__more" type="button" aria-label="加载更多云端记录" onClick={() => setVisibleCount((count) => count + 12)}>加载更多</button>
       )}
     </section>
@@ -700,7 +707,7 @@ export function ReferenceImages({ controller, collapsed = false, showHeading = t
                     event.stopPropagation();
                     controller.removeReference(image.id);
                   }}
-                ><span className="reference-remove-glyph" aria-hidden="true" /></button>
+                ><UxpIcon name="close" className="reference-remove-glyph" /></button>
               </div>
             ))}
           </div>
@@ -740,7 +747,7 @@ export function GenerateAction({ controller, dragHandle }: { controller: Prototy
     return (
       <div className="generation-progress">
         <div>{dragHandle}<UxpIcon name="refresh" className="spin" /><span>{stageLabel} · {controller.progress}% · {elapsed}</span><button type="button" onClick={controller.cancelGeneration}><UxpIcon name="stop" />取消</button></div>
-        <i><span style={{ transform: `scaleX(${Math.max(0, Math.min(100, controller.progress)) / 100})` }} /></i>
+        <i><span style={{ width: `${Math.max(0, Math.min(100, controller.progress))}%` }} /></i>
       </div>
     );
   }

@@ -53,6 +53,55 @@ describe("OpenAIImageProvider", () => {
     ]);
   });
 
+  it("accepts the official dashboard envelope and numeric task timestamps/ids", async () => {
+    const createdAt = Math.floor((Date.now() - 2_000) / 1000);
+    const fetchFn = vi.fn().mockResolvedValueOnce(json({
+      object: "list",
+      days: 3,
+      items: [{
+        id: 12345,
+        model: "gpt-image-2-oai",
+        status: "succeeded",
+        created_at: String(createdAt),
+        finished_at: createdAt + 1,
+        result: { data: [{ url: "https://cdn.example/generated.png" }] },
+      }],
+    }));
+    const provider = new OpenAIImageProvider(config, { fetchFn });
+
+    await expect(provider.listTasks(new AbortController().signal)).resolves.toEqual([
+      expect.objectContaining({
+        taskId: "12345",
+        createdAt: createdAt * 1000,
+        completedAt: (createdAt + 1) * 1000,
+        thumbnailUrl: "https://cdn.example/generated.png",
+      }),
+    ]);
+  });
+
+  it("normalizes microsecond cloud timestamps before the three-day filter", async () => {
+    const createdAt = Date.now() - 3_000;
+    const fetchFn = vi.fn().mockResolvedValueOnce(json({ items: [{
+      id: "microseconds",
+      status: "succeeded",
+      created_at: createdAt * 1000,
+    }] }));
+    const provider = new OpenAIImageProvider(config, { fetchFn });
+
+    await expect(provider.listTasks(new AbortController().signal)).resolves.toEqual([
+      expect.objectContaining({ taskId: "microseconds", createdAt }),
+    ]);
+  });
+
+  it("does not turn a successful but unknown cloud response into an empty history", async () => {
+    const provider = new OpenAIImageProvider(config, {
+      fetchFn: vi.fn().mockResolvedValueOnce(json({ object: "list", result: "temporarily unavailable" })),
+    });
+
+    await expect(provider.listTasks(new AbortController().signal))
+      .rejects.toThrow("云端记录返回格式无法识别");
+  });
+
   it("accepts HTTPS and loopback HTTP only", () => {
     expect(normalizeBaseUrl("https://example.com/")).toBe("https://example.com");
     expect(normalizeBaseUrl("http://127.0.0.1:8317/v1/")).toBe("http://127.0.0.1:8317/v1");
@@ -215,6 +264,46 @@ describe("OpenAIImageProvider", () => {
     expect(fetchFn.mock.calls[1][1]?.method).toBe("POST");
   });
 
+  it.each(["success", " SUCCESS ", "succeeded", "completed"])(
+    "accepts the provider success status alias %s",
+    async (status) => {
+      const fetchFn = vi.fn()
+        .mockResolvedValueOnce(json({ id: "task-success-alias" }))
+        .mockResolvedValueOnce(json({ items: [{
+          id: "task-success-alias",
+          status,
+          result: { data: [{ b64_json: btoa("done") }] },
+        }] }));
+      const provider = new OpenAIImageProvider(config, {
+        fetchFn,
+        sleep: async () => undefined,
+        maxPollAttempts: 1,
+      });
+
+      await expect(provider.generate({
+        prompt: "test", model: "gpt-image-2-oai", n: 1, responseFormat: "url",
+      }, new AbortController().signal)).resolves.toHaveLength(1);
+    },
+  );
+
+  it.each(["error", " ERROR ", "failed", "cancelled", "not_found", "uncertain"])(
+    "rejects the provider failure status alias %s",
+    async (status) => {
+      const fetchFn = vi.fn()
+        .mockResolvedValueOnce(json({ id: "task-failure-alias" }))
+        .mockResolvedValueOnce(json({ items: [{ id: "task-failure-alias", status }] }));
+      const provider = new OpenAIImageProvider(config, {
+        fetchFn,
+        sleep: async () => undefined,
+        maxPollAttempts: 1,
+      });
+
+      await expect(provider.generate({
+        prompt: "test", model: "gpt-image-2-oai", n: 1, responseFormat: "url",
+      }, new AbortController().signal)).rejects.toThrow();
+    },
+  );
+
   it("uses documented Xinbao batch-get for a no-cost connection check", async () => {
     const fetchFn = vi.fn().mockResolvedValueOnce(json({
       object: "batch.task.list",
@@ -254,7 +343,10 @@ describe("OpenAIImageProvider", () => {
       origin: "external-or-unknown",
     })]);
     expect(String(fetchFn.mock.calls[0][0])).toBe("https://task.xinbao-ai.com/api/v1/tasks?limit=100");
-    expect(fetchFn.mock.calls[0][1]?.headers).toMatchObject({ Authorization: expect.stringMatching(/^Bearer /) });
+    expect(fetchFn.mock.calls[0][1]?.headers).toMatchObject({
+      Authorization: expect.stringMatching(/^Bearer /),
+      Accept: "application/json",
+    });
     expect(String(fetchFn.mock.calls[0][0])).not.toContain(config.apiKey);
     expect(fetchFn.mock.calls[0][1]?.body).toBeUndefined();
     expect(fetchFn.mock.calls.some(([url]) => String(url).includes("/images/generations"))).toBe(false);
@@ -266,6 +358,9 @@ describe("OpenAIImageProvider", () => {
 
     const unauthorized = new OpenAIImageProvider(config, { fetchFn: vi.fn(async () => json({}, 401)) });
     await expect(unauthorized.listTasks(new AbortController().signal)).rejects.toThrow("云端记录鉴权失败（401）");
+
+    const forbidden = new OpenAIImageProvider(config, { fetchFn: vi.fn(async () => json({}, 403)) });
+    await expect(forbidden.listTasks(new AbortController().signal)).rejects.toThrow("云端记录鉴权失败（403）");
 
     const limited = new OpenAIImageProvider(config, { fetchFn: vi.fn(async () => json({}, 429)) });
     await expect(limited.listTasks(new AbortController().signal)).rejects.toThrow("请求过于频繁（429）");

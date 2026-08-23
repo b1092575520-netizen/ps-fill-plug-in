@@ -11,6 +11,7 @@ type CloudTaskProvider = Pick<OpenAIImageProvider, "listTasks" | "batchGetTasks"
 type CloudTaskLedger = Pick<RemoteRequestCoordinator, "listRecords" | "reconcileProviderTask">;
 type CloudIdentity = { baseUrl: string; apiKey: string };
 type CloudTaskImage = { status: "loading" | "ready" | "error"; url?: string; error?: string };
+const CLOUD_RECORDS_TIMEOUT_MS = 30_000;
 
 export async function loadCloudTaskRecords(
   provider: Pick<CloudTaskProvider, "listTasks" | "batchGetTasks">,
@@ -103,6 +104,7 @@ export function useCloudRecords({
   const openRef = useRef(open);
   openRef.current = open;
   const recordsAbortRef = useRef<AbortController | null>(null);
+  const recordsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const imageAbortControllersRef = useRef(new Map<string, AbortController>());
   const imageQueueRef = useRef<CloudTaskRecord[]>([]);
   const queuedTaskIdsRef = useRef(new Set<string>());
@@ -142,25 +144,46 @@ export function useCloudRecords({
       return;
     }
     recordsAbortRef.current?.abort();
+    if (recordsTimeoutRef.current) {
+      clearTimeout(recordsTimeoutRef.current);
+      recordsTimeoutRef.current = null;
+    }
     const controller = new AbortController();
     const revision = ++requestRevisionRef.current;
     recordsAbortRef.current = controller;
     setStatus("loading");
     setError(null);
-    const request = loadRecords
+    let timedOut = false;
+    recordsTimeoutRef.current = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+      if (revision === requestRevisionRef.current) {
+        setRecords([]);
+        setStatus("error");
+        setError("云端记录请求超时，请检查网络后重试");
+      }
+    }, CLOUD_RECORDS_TIMEOUT_MS);
+    // Start in a microtask so provider construction errors follow the same
+    // visible error path as rejected network requests.
+    const request = Promise.resolve().then(() => loadRecords
       ? loadRecords({ ...identity, apiKey }, controller.signal)
-      : loadCloudTaskRecords(createProvider({ ...identity, apiKey }), ledger, controller.signal);
+      : loadCloudTaskRecords(createProvider({ ...identity, apiKey }), ledger, controller.signal));
     void request.then((tasks) => {
       if (controller.signal.aborted || revision !== requestRevisionRef.current) return;
       setRecords(tasks);
       setStatus("ready");
     }).catch((requestError) => {
-      if ((requestError as Error).name === "AbortError" || revision !== requestRevisionRef.current) return;
+      if (revision !== requestRevisionRef.current) return;
+      if ((requestError as Error).name === "AbortError" && !timedOut) return;
       setRecords([]);
       setStatus("error");
-      setError(requestError instanceof Error ? requestError.message : "云端记录读取失败");
+      setError(timedOut ? "云端记录请求超时，请检查网络后重试" : requestError instanceof Error ? requestError.message : "云端记录读取失败");
     }).finally(() => {
       if (recordsAbortRef.current === controller) recordsAbortRef.current = null;
+      if (recordsTimeoutRef.current) {
+        clearTimeout(recordsTimeoutRef.current);
+        recordsTimeoutRef.current = null;
+      }
     });
   }, [createProvider, ledger, loadRecords]);
 
@@ -168,6 +191,10 @@ export function useCloudRecords({
     requestRevisionRef.current += 1;
     recordsAbortRef.current?.abort();
     recordsAbortRef.current = null;
+    if (recordsTimeoutRef.current) {
+      clearTimeout(recordsTimeoutRef.current);
+      recordsTimeoutRef.current = null;
+    }
     releaseImages();
     setRecords([]);
     setStatus("idle");
@@ -262,6 +289,7 @@ export function useCloudRecords({
   useEffect(() => () => {
     requestRevisionRef.current += 1;
     recordsAbortRef.current?.abort();
+    if (recordsTimeoutRef.current) clearTimeout(recordsTimeoutRef.current);
     imageAbortControllersRef.current.forEach((controller) => controller.abort());
     imageAbortControllersRef.current.clear();
     imageQueueRef.current = [];

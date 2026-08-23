@@ -61,6 +61,20 @@ interface ProviderDependencies {
   requestCoordinator?: RemoteRequestCoordinator;
 }
 
+function cloudTaskItems(payload: Record<string, unknown>): unknown[] | null {
+  const direct = [payload.items, payload.tasks, payload.data];
+  for (const value of direct) {
+    if (Array.isArray(value)) return value;
+    if (value && typeof value === "object") {
+      const nested = value as Record<string, unknown>;
+      for (const nestedValue of [nested.items, nested.tasks, nested.data]) {
+        if (Array.isArray(nestedValue)) return nestedValue;
+      }
+    }
+  }
+  return null;
+}
+
 export interface ConnectionTestResult {
   snapshot: ProviderSnapshot;
   balance: BalanceSnapshot;
@@ -171,6 +185,7 @@ export class OpenAIImageProvider {
   private authHeaders(includeJson = false) {
     return {
       Authorization: `Bearer ${this.config.apiKey}`,
+      Accept: "application/json",
       ...(includeJson ? { "Content-Type": "application/json" } : {}),
     };
   }
@@ -320,13 +335,8 @@ export class OpenAIImageProvider {
     });
     const payload = await this.parseUnknown(response);
     if (!response.ok) throw this.cloudTaskError(response.status);
-    const items = Array.isArray(payload.items)
-      ? payload.items
-      : Array.isArray(payload.data)
-        ? payload.data
-        : Array.isArray(payload.tasks)
-          ? payload.tasks
-          : [];
+    const items = cloudTaskItems(payload);
+    if (!items) throw new Error("云端记录返回格式无法识别，请稍后重试");
     return recentCloudTasks(this.normalizeCloudTasks(items));
   }
 
@@ -356,7 +366,9 @@ export class OpenAIImageProvider {
     });
     const payload = await this.parseUnknown(response);
     if (!response.ok) throw this.cloudTaskError(response.status);
-    return this.normalizeCloudTasks(Array.isArray(payload.items) ? payload.items : []);
+    const items = cloudTaskItems(payload);
+    if (!items) throw new Error("云端任务返回格式无法识别，请稍后重试");
+    return this.normalizeCloudTasks(items);
   }
 
   async generate(
@@ -440,15 +452,15 @@ export class OpenAIImageProvider {
       data = xinbao
         ? pollingData.items?.find((item) => item.id === taskId) ?? pollingData.items?.[0] ?? {}
         : pollingData;
-      const status = data.status ?? "running";
-      if (["succeeded", "completed"].includes(status)) {
+      const status = String(data.status ?? "running").trim().toLowerCase();
+      if (["succeeded", "completed", "success"].includes(status)) {
         await controls?.setStatus("downloading");
         return this.download(data.result?.data ?? data.data ?? [], signal);
       }
       if (status === "uncertain") {
         throw new Error("任务状态不确定，可能已由上游处理；请勿自动重复提交");
       }
-      if (["failed", "cancelled", "not_found"].includes(status)) {
+      if (["failed", "error", "cancelled", "canceled", "not_found"].includes(status)) {
         await controls?.setStatus("failed");
         throw new Error(`图片任务失败（${status}）`);
       }
@@ -503,14 +515,26 @@ export class OpenAIImageProvider {
     return items.flatMap((item) => {
       if (!item || typeof item !== "object") return [];
       const task = item as CloudTaskPayload;
-      const taskId = typeof task.id === "string" ? task.id : typeof task.task_id === "string" ? task.task_id : "";
+      const taskId = typeof task.id === "string" || typeof task.id === "number"
+        ? String(task.id)
+        : typeof task.task_id === "string" || typeof task.task_id === "number"
+          ? String(task.task_id)
+          : "";
       if (!taskId) return [];
       const result = task.result && typeof task.result === "object" ? task.result as Record<string, unknown> : {};
       const rawData = Array.isArray(result.data) ? result.data : Array.isArray(task.data) ? task.data : [];
       const first = rawData[0] && typeof rawData[0] === "object" ? rawData[0] as Record<string, unknown> : {};
+      const normalizeNumericTimestamp = (value: number) => {
+        if (!Number.isFinite(value) || value <= 0) return null;
+        if (value >= 100_000_000_000_000) return value / 1000;
+        if (value < 10_000_000_000) return value * 1000;
+        return value;
+      };
       const timestamp = (value: unknown) => {
-        if (typeof value === "number" && Number.isFinite(value)) return value < 10_000_000_000 ? value * 1000 : value;
+        if (typeof value === "number") return normalizeNumericTimestamp(value);
         if (typeof value === "string") {
+          const numeric = Number(value);
+          if (Number.isFinite(numeric)) return normalizeNumericTimestamp(numeric);
           const parsed = Date.parse(value);
           return Number.isFinite(parsed) ? parsed : null;
         }
