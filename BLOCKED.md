@@ -123,3 +123,9 @@
 - External blocker: this session has no usable Photoshop UXP console or desktop interaction tool. Read-only PowerShell confirms Photoshop PID 22176 is responding and the formal target files exist, but cannot prove the currently loaded manifest/main/plugin path, `data-cloud-records-status`, record count, HTTP status, or live 200/pending/401/403/thumbnail-404 states without reloading or driving Photoshop.
 - Reproduction commands retained: `npm test -- --run tests/uiWorkflow.test.tsx`; `npm test -- --run tests/useCloudRecords.test.tsx`; `npm test -- --run tests/provider.test.ts`; `npm run build:uxp`; `npm run verify:uxp`.
 - Required next evidence: in Photoshop, without closing it, changing/saving the current document, or generating, load `D:\ps fill plug-in\uxp\manifest.json`, open cloud records, and capture status/record-count/error observations for pending, 401/403, 200 empty, 200 with task, and thumbnail 404. Do not output or log the API key or response body.
+
+# 2026-08-23 UXP tooling read-only recheck
+
+- PowerShell confirms Photoshop PID `22176` is responding and Adobe UXP Developer Tools processes are present; service port `127.0.0.1:14001` is listening.
+- The service root and common status endpoints return 404, and the current log has no reusable Debug/Inspector WebSocket URL. Historical UDT log entries are not evidence for the post-commit artifact.
+- No reload, unload, debug command, document switch, save, or generation was issued. The Photoshop live DOM/status/HTTP-state evidence blocker therefore remains.
