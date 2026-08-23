@@ -461,3 +461,10 @@
 - The supplied main-panel screenshots show both mode states after single-click switching, centered generation count, readable output controls, and side-by-side reference actions. No generation or document mutation was performed.
 - Added interaction regression: both settings action buttons invoke their real controller commands. Full validation is green: 25 test files / 216 passed / 0 skipped, typecheck, UXP build (49 modules), verify, diff check, impeccable detection, and prohibited-test scan.
 - Acceptance status: requested UI scope is complete. The historical protected-directory check remains separately unavailable because `compact-panel-demo` and `compact-panel-demo-v2` are absent; no placeholder directories or verifier changes were made.
+# 2026-08-23 Photoshop 真机复测仍空白（用户截图）
+- 用户在 Photoshop 重新加载并打开“云端生图记录”后再次实测；截图 `C:\Users\Administrator\AppData\Local\Temp\codex-clipboard-d94b98f0-ed3c-44b3-af3d-10324e8830e4.png` 显示标题和刷新/关闭按钮可见，但正文没有 loading、空态、错误态或任务卡。
+- 当前源码 `CloudRecordsPage` 对 idle/loading/ready-empty/error/unknown 均有可见状态，故截图与当前源码行为不一致，先排查宿主加载路径/调试会话，不继续猜改业务逻辑。
+- 只读核验：`uxp/manifest.json` 的 `main` 为 `index.html`，正式 `uxp/plugin.js` 与 `style.css` 均为 2026-08-23 构建产物；Photoshop PID `22176` 仍响应，未关闭、Reload、Unload、切换或操作文档。
+- 当前阻塞：尚未取得本次截图对应实例的有效 UXP DOM/控制台/加载路径证据；历史 UDT 日志不能证明当前实例使用了本次构建。
+- 新证据：只读连接 `ws://127.0.0.1:14001/socket/cli` 成功，发现 Photoshop app client `id=3`；发送只读 `Plugin list` 后返回列表不含 `com.codex.generative-fill`。项目 `uxp/.uxprc` 也不存在，因此当前没有可用于 Debug 的开发会话。
+- 下一步：仅通过当前有效调试会话只读查询页面状态和控制台；若会话不存在，请用户确认 UDT 当前插件实例来源后再做一次受控加载。

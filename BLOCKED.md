@@ -129,3 +129,10 @@
 - PowerShell confirms Photoshop PID `22176` is responding and Adobe UXP Developer Tools processes are present; service port `127.0.0.1:14001` is listening.
 - The service root and common status endpoints return 404, and the current log has no reusable Debug/Inspector WebSocket URL. Historical UDT log entries are not evidence for the post-commit artifact.
 - No reload, unload, debug command, document switch, save, or generation was issued. The Photoshop live DOM/status/HTTP-state evidence blocker therefore remains.
+# 2026-08-23 用户复测后云端记录页仍空白
+- 真实失败证据：用户重新加载 Photoshop 插件后截图 `C:\Users\Administrator\AppData\Local\Temp\codex-clipboard-d94b98f0-ed3c-44b3-af3d-10324e8830e4.png`；“云端生图记录”标题、刷新和关闭按钮可见，正文区域完全空白。
+- 与源码矛盾：`src/components/Shared.tsx` 的 `CloudRecordsPage` 对任何状态都应渲染 `.cloud-records__state` 或任务列表；当前 `uxp/plugin.js` 已包含 `data-cloud-records-status` 字符串，不能据此证明 Photoshop 当前实例已加载该文件。
+- 可复现/核对：在项目根执行 `Get-Content uxp/manifest.json`、检查 `uxp/plugin.js` 时间戳；只读检查 Photoshop PID `22176` 和 UDT 端口 `127.0.0.1:14001`。当前没有可复用的有效 Debug/Inspector session，无法读取本次截图对应 DOM、控制台异常或实际入口路径。
+- 只读 UDT 证据：连接 `ws://127.0.0.1:14001/socket/cli` 成功并发现 Photoshop client `id=3`；对其发送 `Plugin list` 返回的插件列表不含 `com.codex.generative-fill`。因此不能把用户截图归因于当前正式 `uxp/manifest.json` 实例，也不能安全发送 Debug 查询。
+- 安全边界：未关闭 Photoshop，未 Reload/Unload，未切换/保存/修改当前文档，未生成，未读取或输出 API Key。
+- 解除条件：取得当前有效 UXP 调试会话后只读查询 `.cloud-records-page` 的 `data-cloud-records-status`、文本、任务卡数量和控制台异常；或由用户在 UDT 确认当前实例确实来自 `D:\ps fill plug-in\uxp\manifest.json` 后再受控加载。离线测试/build 不能替代该证据。
