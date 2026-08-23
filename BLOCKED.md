@@ -11,6 +11,8 @@
 - Photoshop 最新 UXP 日志（`UXPLogs_2026-08-23_10-25-35_294186.log`）只读可见两次 `Devtools: Removing existing plugin with id com.codex.generative-fill`（12:33:33、12:52:16），其后没有该插件新的 Load/Debug 记录；这支持“当前截图不是本次构建有效 session”的判断，但仍不能替代页面 DOM 证据。
 - 当前工作树仍有任务外的既有脏改动（`src/backend/photoshopGateway.ts`、`src/documentSessionState.ts`、`src/remoteRequestLedger.ts`、`src/styles.css`、`src/usePrototypeState.ts` 及其测试）；本轮未修改、未暂存、未覆盖这些文件。
 - 额外门禁复测：`node scripts/check-protected-dirs.cjs` 仍以 exit 1 失败，首个错误为 `Resolve-Path ...\compact-panel-demo` 不存在，随后摘要 `compact-panel-demo changed: 0 files, e3b0c442...`；未创建伪造保护目录，未修改脚本。
+- UXP CLI 只读验证：`plugin validate --manifest D:\ps fill plug-in\uxp\manifest.json` 成功，证明 manifest 可被当前 PS 27.8.0 校验；`plugin debug` 无 `.uxprc` 时失败 `Cannot read properties of undefined (reading 'sessions')`，因此无法进入 DOM/控制台查询路径。
+- 反向 fixture 已证明坏响应不会静默成空白：非法结构、401 和 30 秒悬挂分别进入可见错误；正常 fixture 恢复为 `status=ready, records=1`。这仍是离线证据，不替代 Photoshop 真机证据。
 
 ## 当前状态
 

@@ -28,7 +28,16 @@ exit 0 (only Windows LF->CRLF warnings)
 - 定向反向回归：`npm test -- --run tests/uiWorkflow.test.tsx tests/useCloudRecords.test.tsx tests/provider.test.ts` 输出 `Test Files 3 passed (3)`、`Tests 105 passed (105)`、`0 skipped`。
 - 覆盖范围：idle/loading/ready/error/未知状态、30秒超时、401/403/非法 envelope、心宝 `{ object, days, items }`、数字/字符串时间戳、官方历史 URL/Authorization/Accept、缩略图失败仍显示任务文字卡片、取消/身份切换。
 - 只读 UDT 查询输出：`{"appClient":"PS","pluginCount":24,"targetPresent":false,"targetPath":null}`。Photoshop PID `22176` 为响应状态，端口 `14001` 可用；UDT workspace 配置虽指向 `D:\ps fill plug-in\uxp\manifest.json`，但 `uxp/.uxprc exists: False`，当前没有该插件有效开发 session。
+- 只读 CLI 复核：`uxp plugin validate --manifest D:\ps fill plug-in\uxp\manifest.json` 返回 `Manifest is validated successfully`；`uxp plugin debug` 在无 `.uxprc` 时失败 `TypeError: Cannot read properties of undefined (reading 'sessions')`，未发起 Load/Reload/Unload。
 - 结论：接口、状态机、React 和正式构建离线证据齐全；当前 Photoshop 真机“已加载内容/DOM/HTTP 状态”证据仍缺失，不能声称修复完成。
+- 反向 fixture 证据（一次性测试，已移除）：
+```text
+fixture=invalid response -> visible error: 云端记录返回格式无法识别
+fixture=401 -> visible error: 云端记录鉴权失败（401）
+fixture=hanging 30s -> visible status=error, error=云端记录请求超时，请检查网络后重试
+fixture=normal -> visible status=ready, records=1, taskId=fixture-task
+Test Files 1 passed (1), Tests 1 passed (1)
+```
 
 ## 2026-08-18 恢复阶段结果
 - 已完成：C 盘临时副本建立；补齐 `uxp-static/manifest.json`；修复 Klein 4B 原生选区路径和历史 UXP CSS 回归。
