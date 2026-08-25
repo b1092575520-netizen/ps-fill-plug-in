@@ -501,3 +501,18 @@ Test Files 1 passed (1), Tests 1 passed (1)
 - 当前阻塞：尚未取得本次截图对应实例的有效 UXP DOM/控制台/加载路径证据；历史 UDT 日志不能证明当前实例使用了本次构建。
 - 新证据：只读连接 `ws://127.0.0.1:14001/socket/cli` 成功，发现 Photoshop app client `id=3`；发送只读 `Plugin list` 后返回列表不含 `com.codex.generative-fill`。项目 `uxp/.uxprc` 也不存在，因此当前没有可用于 Debug 的开发会话。
 - 下一步：仅通过当前有效调试会话只读查询页面状态和控制台；若会话不存在，请用户确认 UDT 当前插件实例来源后再做一次受控加载。
+
+# 2026-08-23 云端记录零尺寸布局修复
+- 已完成：当前 Photoshop CDP 只读检查确认 `status=ready`、8 条记录已渲染，但 `.cloud-records__list` 为 `175x0`、`.cloud-task` 为 `0x0`；一次性注入明确块/弹性布局后恢复为 `208x98` 卡片，根因是 UXP intrinsic flex/grid 尺寸塌陷，不是接口或 React 数据失败。
+- 已修复：为 UXP 云端页面、列表和卡片增加明确 `display/width/height/min-height/flex` 规则，卡片改用 flex，避免宿主对 CSS Grid 和 `min-height:100%` 算出零尺寸。
+- 已增加：UI 回归断言覆盖云端页、列表、卡片和缩略图的稳定几何规则。
+- 真机状态：本次只读 CDP 查询未关闭 Photoshop、未 Reload/Unload、未切换/保存/修改文档、未生成、未读取或输出 API Key；一次性样式注入仅存在于调试 DOM，会话结束即消失。正式源码需重新构建并由用户安全时机加载后复核截图。
+- 下一步：运行定向/完整离线门禁，重建 UXP 产物；随后在不声称真机通过的前提下记录用户 Reload 后的最终视觉证据。
+
+# 2026-08-23 正式 Photoshop 真机复核
+- 任务0原始门禁输出：`npm test` -> `Test Files 26 passed (26)`, `Tests 238 passed (238)`、`0 skipped`；`npm run typecheck` 退出 0；`npm run build:uxp` -> `49 modules`, `uxp/style.css 38.64 kB`, `uxp/plugin.js 286.26 kB`；`npm run verify:uxp` -> `UXP build verified`；`git diff --check` 退出 0（仅换行转换 warning）。
+- 文件核对：`uxp/plugin.js 286258 bytes`、`uxp/style.css 38640 bytes`（2026-08-23 13:31:14），`uxp/manifest.json 672 bytes`（2026-08-18 18:31:28）；`uxp-static` 只读存在 `index.html`/`manifest.json`，Photoshop 使用正式 `uxp`。
+- 正式宿主 Load：`uxp plugin load --manifest D:\ps fill plug-in\uxp\manifest.json --apps PS` 输出 `Validate command successfull ... PS 27.8.0`、`Load command successfull`、`Plugin Load Successfull`；未关闭 Photoshop、未操作当前文档、未生成。
+- 正式 DOM：`data-cloud-records-status=ready`、记录卡 `8`，页面 `228x875`，列表 `208x826`，单卡 `208x98`，列表/卡片为 `display:block/flex`；正文任务模型、状态、时间、ID 可见，已不再是标题加空白。
+- 宿主反向 fixture（不输出响应正文/Key）：`pending => loading / 正在读取云端记录…`；`401 => error / 云端记录鉴权失败（401）重试`；`403 => error / 云端记录鉴权失败（403）重试`；`200 空数组 => ready / 最近 3 天没有云端生图记录`；`200 任务 => ready / cards=1`；`thumbnail 404 => ready / cards=1 / Network request failed重试`。
+- 当前剩余阻塞：`node scripts/check-protected-dirs.cjs` 仍因缺失历史 `compact-panel-demo` 失败；该目录未伪造，脚本未修改。测试基线比任务书 236 高 2 项（当前 238），未删测或放宽断言。

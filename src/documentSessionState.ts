@@ -131,6 +131,8 @@ export function cancelDocumentJob(
     ...session,
     stage: "idle",
     status: "cancelled",
+    progress: 0,
+    elapsedSeconds: 0,
     jobs: session.jobs.map((job) => job.id === targetId ? { ...job, status: "cancelled" } : job),
   }));
 }

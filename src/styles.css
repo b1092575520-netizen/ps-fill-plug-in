@@ -541,9 +541,12 @@ select { color-scheme: dark; }
 .disclosure-toggle { display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; font-size: 13px; font-weight: 400; color: var(--muted); }
 
 .references { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.references-actions { display: flex; min-height: 26px; align-items: center; justify-content: space-between; gap: 8px; }
-.references-actions > span { font-size: 8px; color: var(--muted); }
+.references-actions { display: flex; min-height: 26px; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.references-actions > span { flex: 1 1 auto; min-width: 64px; font-size: 8px; color: var(--muted); }
+.references-actions__buttons { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; margin-left: auto; }
 .references-actions button { display: inline-flex; width: 26px; height: 26px; align-items: center; justify-content: center; padding: 0; border: 1px solid var(--line); border-radius: 5px; background: var(--panel-3); color: var(--muted); }
+.references-actions .reference-clear,
+.references-actions .reference-selection-add { width: auto; padding: 0 8px; }
 .references-actions button:hover { border-color: var(--accent); color: var(--text); }
 .reference-empty-action { display: flex; width: 100%; min-height: 30px; align-items: center; justify-content: center; gap: 6px; border: 1px dashed var(--line); border-radius: 5px; background: rgba(0, 0, 0, .12); font-size: 10px; color: var(--muted); }
 .reference-empty-action:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
@@ -569,6 +572,8 @@ select { color-scheme: dark; }
 .reference-item > span { position: absolute; top: 2px; left: 2px; display: flex; width: 15px; height: 15px; align-items: center; justify-content: center; border-radius: 3px; background: rgba(0,0,0,.75); font-size: 7px; }
 .reference-item > div { position: absolute; right: 2px; bottom: 2px; left: 2px; display: flex; justify-content: center; gap: 1px; }
 .reference-item > div button { display: flex; width: 15px; height: 15px; align-items: center; justify-content: center; padding: 0; border-radius: 2px; background: rgba(0,0,0,.78); }
+.reference-item > .reference-remove { position: absolute; z-index: 2; top: 3px; right: 3px; display: flex; width: 16px; height: 16px; align-items: center; justify-content: center; padding: 0; border: 1px solid rgba(255,255,255,.35); border-radius: 50%; background: rgba(0,0,0,.72); }
+.reference-remove-glyph { display: inline-flex; width: 10px; height: 10px; align-items: center; justify-content: center; color: rgba(255,255,255,.9); font-size: 11px; line-height: 1; }
 
 .generate-wrap { display: flex; flex-direction: column; gap: 5px; min-width: 0; margin: 8px 10px; }
 .generate-button {
@@ -610,7 +615,7 @@ select { color-scheme: dark; }
 .generation-progress > div > span { flex: 1 1 auto; min-width: 0; }
 .generation-progress button { display: flex; align-items: center; gap: 3px; padding: 4px 5px; border-radius: 4px; background: rgba(0,0,0,.2); font-size: 8px; color: #d0cbff; }
 .generation-progress > i { height: 3px; overflow: hidden; border-radius: 2px; background: rgba(255,255,255,.1); }
-.generation-progress > i span { display: block; width: 100%; height: 100%; transform: scaleX(0); transform-origin: left center; border-radius: inherit; background: var(--accent); transition: transform .18s linear; }
+.generation-progress > i span { display: block; width: 0%; height: 100%; border-radius: inherit; background: var(--accent); transition: width .18s linear; }
 .spin { animation: spin 1s linear infinite; }
 
 .results-empty {
@@ -688,6 +693,43 @@ select { color-scheme: dark; }
 .insert-button:not(:disabled):active { transform: translateY(0) scale(.985); }
 .non-destructive { display: flex; align-items: center; justify-content: center; gap: 4px; font-size: 7px; text-align: center; color: var(--muted-2); }
 
+.write-recovery {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 9px;
+  padding: 10px;
+}
+.write-recovery-heading { display: flex; align-items: center; gap: 7px; }
+.write-recovery-heading > span { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.write-recovery-heading strong { font-size: 10px; }
+.write-recovery-heading small { font-size: 8px; color: var(--muted-2); }
+.write-recovery > img {
+  display: block;
+  width: 100%;
+  max-height: 260px;
+  object-fit: contain;
+  border: 1px solid var(--line-soft);
+  border-radius: 5px;
+  background: #151618;
+}
+.write-recovery > p { margin: 0; font-size: 8px; line-height: 1.45; color: var(--danger); }
+.write-recovery-actions { display: flex; gap: 6px; }
+.write-recovery-actions button {
+  display: flex;
+  min-height: 31px;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--panel-3);
+  font-size: 9px;
+}
+.write-recovery-actions button:first-child { border-color: rgba(125, 108, 255, .45); background: var(--accent-soft); }
+.write-recovery-actions button:hover:not(:disabled) { border-color: var(--accent); transform: translateY(-1px); }
+
 .plugin-panel .panel-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .panel-action-bar { flex: 0 0 auto; border-top: 1px solid var(--line); background: var(--panel-2); }
 .plugin-panel .panel-view--results { padding-bottom: 0; }
@@ -717,6 +759,31 @@ body.uxp-shell .output-controls > * + *,
 body.uxp-shell .detail-parameters > * + *,
 body.uxp-shell .references > * + *,
 body.uxp-shell .results > * + * { margin-top: 6px; }
+
+/* UXP's flex/grid intrinsic sizing can collapse nested cloud-record cards to 0x0. */
+body.uxp-shell .panel-view--cloud-records,
+body.uxp-shell .cloud-records-page {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+}
+body.uxp-shell .cloud-records__list {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+body.uxp-shell .cloud-task {
+  display: flex;
+  width: 100%;
+  height: 98px;
+  min-height: 98px;
+  flex: none;
+  gap: 8px;
+}
+body.uxp-shell .cloud-task + .cloud-task { margin-top: 6px; }
+body.uxp-shell .cloud-task__preview { flex: 0 0 86px; }
+body.uxp-shell .cloud-task__meta { flex: 1 1 auto; }
 
 body.uxp-shell .parameter-grid,
 body.uxp-shell .candidate-grid {

@@ -249,8 +249,9 @@ export class RemoteRequestCoordinator {
     await this.ensureLoaded();
     const record = this.records.find((item) => item.providerTaskId === taskId);
     if (!record) return;
-    if (["succeeded", "completed"].includes(status)) record.status = "completed";
-    else if (["failed", "cancelled", "not_found"].includes(status)) record.status = "failed";
+    const normalizedStatus = status.trim().toLowerCase();
+    if (["succeeded", "completed", "success"].includes(normalizedStatus)) record.status = "completed";
+    else if (["failed", "error", "cancelled", "canceled", "not_found"].includes(normalizedStatus)) record.status = "failed";
     else return;
     this.release(record.localRequestId);
     await this.persist();

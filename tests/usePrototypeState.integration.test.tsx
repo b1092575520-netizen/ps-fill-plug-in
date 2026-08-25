@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const host = vi.hoisted(() => ({
   insert: vi.fn(),
+  captureReference: vi.fn(),
+  uploadReference: vi.fn(),
   context: {
     documentId: "doc-paid-once",
     documentName: "paid-once.psd",
@@ -26,12 +28,18 @@ vi.mock("../src/backend/runtime", () => ({
     getContext: async () => host.context,
     getOpenDocumentIds: async () => host.openDocumentIds,
     insert: host.insert,
-    captureReference: vi.fn(),
+    captureReference: host.captureReference,
     preview: vi.fn(),
     discardPreview: vi.fn(async () => undefined),
     cleanupPluginResiduals: vi.fn(async () => undefined),
     cleanupSelectionChannel: vi.fn(async () => undefined),
   }),
+}));
+
+vi.mock("../src/backend/referenceUploader", () => ({
+  LitterboxReferenceUploader: class {
+    upload = host.uploadReference;
+  },
 }));
 
 import {
@@ -99,6 +107,8 @@ describe("usePrototypeState paid generation and write recovery", () => {
       },
     });
     host.insert.mockReset();
+    host.captureReference.mockReset();
+    host.uploadReference.mockReset().mockResolvedValue("https://cdn.example/reference.png");
     host.insert
       .mockRejectedValueOnce(new Error("Photoshop 写入失败"))
       .mockResolvedValueOnce({ documentId: host.context.documentId, layerIds: ["layer-final"] });
@@ -307,6 +317,94 @@ describe("usePrototypeState paid generation and write recovery", () => {
     act(() => tree.unmount());
   });
 
+  it("returns the footer to its idle state after a single direct write succeeds", async () => {
+    const fetchFn = vi.fn(async (input: RequestInfo | URL) => (
+      String(input) === "https://litterbox.catbox.moe/resources/internals/api.php"
+        ? new Response("https://cdn.example/reference.png", { status: 200 })
+        : String(input).endsWith("/v1/images/generations")
+          ? new Response(JSON.stringify({ data: [{ b64_json: ONE_PIXEL_PNG }] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+            })
+          : new Response(JSON.stringify({ items: [] }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            })
+    ));
+    vi.stubGlobal("fetch", fetchFn);
+    host.captureReference.mockResolvedValue({
+      bytes: new Uint8Array([1, 2, 3]),
+      mimeType: "image/png",
+      fileName: "document.png",
+    });
+    host.insert.mockReset().mockResolvedValue({ documentId: host.context.documentId, layerIds: ["layer-final"] });
+
+    let current!: PrototypeController;
+    let tree!: ReturnType<typeof create>;
+    await act(async () => { tree = create(<Harness expose={(controller) => { current = controller; }} />); });
+    await waitFor(() => current.context?.documentId === host.context.documentId, "Photoshop context was not activated");
+    act(() => current.setSettings({ ...current.settings, apiKey: "test-key", connectionStatus: "connected" }));
+    act(() => current.updateDraft({
+      mode: "redraw",
+      prompt: "保留人物并修复衣服边缘",
+      model: "gpt-image-2-oai",
+      count: 1,
+      outputTarget: "current-document",
+    }));
+    await act(async () => undefined);
+
+    expect(current.startGeneration()).toBe(true);
+    await waitFor(() => host.insert.mock.calls.length === 1, "successful single result was not written");
+    await waitFor(() => current.candidates.length === 0, "written result was not released");
+    expect(host.captureReference).toHaveBeenCalledWith("document", host.context.documentId, expect.anything());
+
+    expect(current.workspaceView).toBe("config");
+    expect(current.status).toBe("idle");
+    expect(current.stage).toBe("idle");
+    expect(current.progress).toBe(0);
+    expect(current.elapsedSeconds).toBe(0);
+    expect(current.generationResultStatus).toBe("idle");
+    expect(current.writeStatus).toBe("idle");
+
+    act(() => tree.unmount());
+  });
+
+  it("keeps candidates in write recovery when a results insertion hits a modal error", async () => {
+    const fetchFn = vi.fn(async (input: RequestInfo | URL) => (
+      String(input).endsWith("/v1/images/generations")
+        ? new Response(JSON.stringify({ data: [
+            { b64_json: ONE_PIXEL_PNG },
+            { b64_json: ONE_PIXEL_PNG },
+          ] }), { status: 200, headers: { "content-type": "application/json" } })
+        : new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "content-type": "application/json" } })
+    ));
+    vi.stubGlobal("fetch", fetchFn);
+    host.insert.mockReset()
+      .mockRejectedValueOnce({ message: "host is in a modal state" })
+      .mockResolvedValueOnce({ documentId: host.context.documentId, layerIds: ["layer-retry"] });
+
+    let current!: PrototypeController;
+    let tree!: ReturnType<typeof create>;
+    await act(async () => { tree = create(<Harness expose={(controller) => { current = controller; }} />); });
+    await waitFor(() => current.context?.documentId === host.context.documentId, "Photoshop context was not activated");
+    act(() => current.setSettings({ ...current.settings, apiKey: "test-key", connectionStatus: "connected" }));
+    act(() => current.updateDraft({ prompt: "two candidates", model: "gpt-image-2-oai", count: 2 }));
+    await act(async () => undefined);
+    expect(current.startGeneration()).toBe(true);
+    await waitFor(() => current.workspaceView === "results", "candidates did not arrive");
+
+    act(() => current.insertSelected());
+    await waitFor(() => current.workspaceView === "write-recovery", "results insertion did not enter recovery");
+    expect(current.writeStatus).toBe("failed");
+    expect(current.candidates).toHaveLength(2);
+    expect(current.writeError).toContain("modal state");
+
+    act(() => current.retryGeneratedWrite());
+    await waitFor(() => current.workspaceView === "config" && current.candidates.length === 0, "write recovery did not complete");
+    expect(host.insert).toHaveBeenCalledTimes(3);
+    act(() => tree.unmount());
+  });
+
   it("blocks rapid double-click, a six-second repeat, and a second document while one POST is active", async () => {
     let resolveGeneration!: (response: Response) => void;
     const fetchFn = vi.fn((input: RequestInfo | URL) => {
@@ -439,6 +537,9 @@ describe("usePrototypeState paid generation and write recovery", () => {
     await act(async () => { await Promise.resolve(); });
 
     expect(current.status).toBe("idle");
+    expect(current.stage).toBe("idle");
+    expect(current.progress).toBe(0);
+    expect(current.elapsedSeconds).toBe(0);
     expect(current.candidates).toHaveLength(0);
     expect(fetchFn.mock.calls.filter(([input, init]) => (
       String(input).endsWith("/v1/images/generations") && init?.method === "POST"

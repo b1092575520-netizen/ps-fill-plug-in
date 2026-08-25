@@ -266,23 +266,40 @@ export class UxpPhotoshopRuntime implements PhotoshopRuntime {
     try {
       await this.executeAsModal(async () => {
         document = await this.photoshop.app.open(files[0]);
-        const openedBackground = document.activeLayers[0] ?? document.layers[0];
-        if (!openedBackground) throw new Error("Photoshop 未返回新文档图层");
-        await this.photoshop.action.batchPlay([{
-          _obj: "set",
-          _target: openedBackground.id
-            ? [{ _ref: "layer", _id: openedBackground.id }]
-            : [{ _ref: "layer", _enum: "ordinal", _value: "targetEnum" }],
-          to: {
-            _obj: "layer",
-            name: assets[0].layerName ?? assets[0].id,
-            opacity: { _unit: "percentUnit", _value: 100 },
-            mode: { _enum: "blendMode", _value: "normal" },
-          },
-          _options: { dialogOptions: "dontDisplay" },
-        }], { synchronousExecution: true, modalBehavior: "execute" });
-        openedBackground.visible = true;
-        if (openedBackground.id !== undefined) layerIds.push(String(openedBackground.id));
+        const openedLayer = document.activeLayers?.[0] ?? document.layers?.[0];
+        let descriptorLayerId: string | number | undefined;
+        try {
+          const descriptor = await this.photoshop.action.batchPlay([{
+            _obj: "get",
+            _target: [{ _ref: "layer", _enum: "ordinal", _value: "targetEnum" }],
+            _options: { dialogOptions: "dontDisplay" },
+          }], { synchronousExecution: true, modalBehavior: "execute" });
+          descriptorLayerId = descriptor?.[0]?.layerID ?? descriptor?.[0]?.ID;
+        } catch (error) {
+          if (openedLayer?.id === undefined) throw error;
+        }
+        const openedLayerId = descriptorLayerId ?? openedLayer?.id;
+        if (openedLayerId === undefined) throw new Error("Photoshop 未返回新文档图层");
+        try {
+          await this.photoshop.action.batchPlay([{
+            _obj: "set",
+            _target: [{ _ref: "layer", _id: openedLayerId }],
+            to: { _obj: "layer", name: assets[0].layerName ?? assets[0].id },
+            _options: { dialogOptions: "dontDisplay" },
+          }], { synchronousExecution: true, modalBehavior: "execute" });
+        } catch {
+          try {
+            if (openedLayer) openedLayer.name = assets[0].layerName ?? assets[0].id;
+          } catch {
+            // The image is already open; an optional layer rename must not discard it.
+          }
+        }
+        try {
+          if (openedLayer) openedLayer.visible = true;
+        } catch {
+          // A newly opened image is visible by default.
+        }
+        layerIds.push(String(openedLayerId));
         for (let index = 1; index < files.length; index += 1) {
           const layer = await this.placeFile(
             document,

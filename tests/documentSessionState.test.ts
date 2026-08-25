@@ -266,6 +266,8 @@ describe("document session state", () => {
       progress: 71,
       candidates: [],
     }];
+    b.progress = 71;
+    b.elapsedSeconds = 12;
     const sessions = upsertDocumentSession(upsertDocumentSession({}, a), b);
     const progressedA = updateDocumentSession(sessions, "doc-a", (session) => ({
       ...session,
@@ -278,6 +280,8 @@ describe("document session state", () => {
     expect(cancelledB["doc-a"].progress).toBe(86);
     expect(cancelledB["doc-a"].jobs[0].status).toBe("running");
     expect(cancelledB["doc-b"].status).toBe("cancelled");
+    expect(cancelledB["doc-b"].progress).toBe(0);
+    expect(cancelledB["doc-b"].elapsedSeconds).toBe(0);
     expect(cancelledB["doc-b"].jobs[0].status).toBe("cancelled");
   });
 

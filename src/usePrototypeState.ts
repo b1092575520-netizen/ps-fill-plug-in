@@ -103,6 +103,16 @@ const INITIAL_SETTINGS: ConnectionSettings = {
 
 const EMPTY_BALANCE: BalanceSnapshot = { status: "idle", unit: "积分" };
 
+function errorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (typeof error === "object" && error && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+  if (typeof error === "string" && error.trim()) return error;
+  return fallback;
+}
+
 export function resetProviderConnection(
   current: ConnectionSettings,
   next: ConnectionSettings,
@@ -204,6 +214,7 @@ interface DocumentRuntimeResources {
   previewStaging: boolean;
   previewCleanup: boolean;
   insertInFlight: boolean;
+  cleanupRequested: boolean;
   previewRevision: number;
   jobId: string | null;
   candidateOwner: DocumentTaskToken | null;
@@ -223,6 +234,7 @@ function createDocumentRuntimeResources(): DocumentRuntimeResources {
     previewStaging: false,
     previewCleanup: false,
     insertInFlight: false,
+    cleanupRequested: false,
     previewRevision: 0,
     jobId: null,
     candidateOwner: null,
@@ -375,7 +387,18 @@ export function usePrototypeState() {
 
   const cleanupDocumentResources = useCallback((documentId: string) => {
     const resources = documentResourcesRef.current.get(documentId);
-    if (!resources) return;
+    if (!resources) return true;
+    if (resources.insertInFlight) {
+      resources.cleanupRequested = true;
+      resources.abort?.abort();
+      if (resources.timer) window.clearInterval(resources.timer);
+      if (resources.startTimer) window.clearTimeout(resources.startTimer);
+      if (resources.elapsedTimer) window.clearInterval(resources.elapsedTimer);
+      resources.timer = null;
+      resources.startTimer = null;
+      resources.elapsedTimer = null;
+      return false;
+    }
     resources.abort?.abort();
     if (resources.timer) window.clearInterval(resources.timer);
     if (resources.startTimer) window.clearTimeout(resources.startTimer);
@@ -386,7 +409,15 @@ export function usePrototypeState() {
     sessionCoordinatorRef.current.closeDocument(documentId);
     void previewCoordinatorRef.current?.discard(documentId);
     void assetLifecycleRef.current.cleanupDocument(documentId);
+    return true;
   }, []);
+
+  const finishDeferredCleanup = useCallback((documentId: string, resources: DocumentRuntimeResources) => {
+    if (!resources.cleanupRequested || resources.insertInFlight) return;
+    resources.cleanupRequested = false;
+    cleanupDocumentResources(documentId);
+    setDocumentSessions((sessions) => removeDocumentSession(sessions, documentId));
+  }, [cleanupDocumentResources]);
 
   const releaseDocumentResults = useCallback(async (documentId: string) => {
     const resources = resourcesFor(documentId);
@@ -410,6 +441,10 @@ export function usePrototypeState() {
       photoshopPreviewSession: null,
       previewStatus: "idle",
       workspaceView: "config",
+      status: "idle",
+      progress: 0,
+      stage: "idle",
+      elapsedSeconds: 0,
       generationResultStatus: "idle",
       writeStatus: "idle",
       writeError: null,
@@ -449,7 +484,7 @@ export function usePrototypeState() {
         "success",
       );
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Photoshop 写入失败";
+      const message = errorMessage(error, "Photoshop 写入失败");
       updateSession(documentId, (session) => ({
         ...session,
         generationResultStatus: "succeeded",
@@ -460,8 +495,9 @@ export function usePrototypeState() {
       notify("图片已生成，重试写入", "warning");
     } finally {
       resources.insertInFlight = false;
+      finishDeferredCleanup(documentId, resources);
     }
-  }, [assetOwner, notify, photoshopGateway, releaseDocumentResults, resourcesFor, updateSession]);
+  }, [assetOwner, finishDeferredCleanup, notify, photoshopGateway, releaseDocumentResults, resourcesFor, updateSession]);
 
   const retryGeneratedWrite = useCallback(() => {
     const documentId = activeDocumentIdRef.current;
@@ -1277,10 +1313,18 @@ export function usePrototypeState() {
               || session.jobs.find((item) => item.id === id)?.status === "queued"
               ? "idle"
               : session.status,
+            progress: session.jobs.find((item) => item.id === id)?.status === "running"
+              || session.jobs.find((item) => item.id === id)?.status === "queued"
+              ? 0
+              : session.progress,
             stage: session.jobs.find((item) => item.id === id)?.status === "running"
               || session.jobs.find((item) => item.id === id)?.status === "queued"
               ? "idle"
               : session.stage,
+            elapsedSeconds: session.jobs.find((item) => item.id === id)?.status === "running"
+              || session.jobs.find((item) => item.id === id)?.status === "queued"
+              ? 0
+              : session.elapsedSeconds,
             jobs: session.jobs.map((item) => item.id === id && ["queued", "running"].includes(item.status)
               ? { ...item, status: "cancelled" }
               : item),
@@ -1314,6 +1358,7 @@ export function usePrototypeState() {
       return false;
     }
     resources.startTimer = window.setTimeout(() => {
+      if (!sessionCoordinatorRef.current.accepts(token)) return;
       updateSession(documentId, (session) => ({
         ...session,
         status: session.status === "queued" ? "running" : session.status,
@@ -1326,6 +1371,7 @@ export function usePrototypeState() {
     }, 400);
     let simulatedProgress = 0;
     resources.timer = window.setInterval(() => {
+      if (!sessionCoordinatorRef.current.accepts(token)) return;
       simulatedProgress = Math.min(100, simulatedProgress + 8);
       updateSession(documentId, (session) => ({
         ...session,
@@ -1339,6 +1385,7 @@ export function usePrototypeState() {
         if (resources.timer) window.clearInterval(resources.timer);
         resources.timer = null;
         window.setTimeout(() => {
+          if (!sessionCoordinatorRef.current.accepts(token)) return;
           finishGeneration(snapshot, ratio, token);
           if (resources.jobId === id) {
             resources.jobId = null;
@@ -1369,6 +1416,7 @@ export function usePrototypeState() {
     void assetLifecycleRef.current.cleanupJob(documentId, token.jobId, token.revision);
     resources.jobId = null;
     sessionCoordinatorRef.current.finishCancellation(token);
+    if (UXP_RUNTIME && settingsRef.current.apiKey.trim()) refreshCloudTasksRef.current();
     notify("已取消当前任务");
   }, [notify, resourcesFor, updateSession]);
 
@@ -1470,11 +1518,19 @@ export function usePrototypeState() {
         notify("已确认当前候选并释放临时资源", "success");
       }).catch((error) => {
         if (resources.previewRevision === previewRevision) {
-          updateSession(documentId, (session) => ({ ...session, previewStatus: "ready" }));
-          notify(error instanceof Error ? error.message : "确认候选失败", "warning");
+          updateSession(documentId, (session) => ({
+            ...session,
+            previewStatus: "ready",
+            generationResultStatus: "succeeded",
+            writeStatus: "failed",
+            writeError: errorMessage(error, "Photoshop 写入失败"),
+            workspaceView: "write-recovery",
+          }));
+          notify(errorMessage(error, "确认候选失败"), "warning");
         }
       }).finally(() => {
         resources.insertInFlight = false;
+        finishDeferredCleanup(documentId, resources);
         if (resources.previewRevision === previewRevision) resources.previewCleanup = false;
       });
       return;
@@ -1515,14 +1571,22 @@ export function usePrototypeState() {
       })
       .catch((error) => {
         if (resources.previewRevision === previewRevision) {
-          updateSession(documentId, (session) => ({ ...session, previewStatus: "ready" }));
-          notify(error instanceof Error ? error.message : "Photoshop 写入失败", "warning");
+          updateSession(documentId, (session) => ({
+            ...session,
+            previewStatus: "ready",
+            generationResultStatus: "succeeded",
+            writeStatus: "failed",
+            writeError: errorMessage(error, "Photoshop 写入失败"),
+            workspaceView: "write-recovery",
+          }));
+          notify(errorMessage(error, "Photoshop 写入失败"), "warning");
         }
       })
       .finally(() => {
         resources.insertInFlight = false;
+        finishDeferredCleanup(documentId, resources);
       });
-  }, [activeCandidateId, assetOwner, candidates, draft.outputTarget, notify, photoshopPreviewSession, releaseDocumentResults, resourcesFor, selectedCount, updateSession]);
+  }, [activeCandidateId, assetOwner, candidates, draft.outputTarget, finishDeferredCleanup, notify, photoshopPreviewSession, releaseDocumentResults, resourcesFor, selectedCount, updateSession]);
 
   const commitSnapshot = useCallback((
     snapshot: NonNullable<ConnectionSettings["providerSnapshot"]>,
@@ -1717,6 +1781,7 @@ export function usePrototypeState() {
       model: generationModel(current.modelOptions[0] ?? "", current.modelOptions, current.providerSnapshot),
     });
     void provider.testConnection(controller.signal).then((result) => {
+      if (providerRefreshAbortRef.current !== controller) return;
       commitSnapshot(result.snapshot, current.baseUrl, apiKey);
       if (
         settingsRef.current.baseUrl === current.baseUrl
@@ -1728,6 +1793,11 @@ export function usePrototypeState() {
       );
     }).catch((error) => {
       if ((error as Error).name === "AbortError") return;
+      if (providerRefreshAbortRef.current !== controller) return;
+      if (
+        settingsRef.current.baseUrl !== current.baseUrl
+        || settingsRef.current.apiKey.trim() !== apiKey
+      ) return;
       setSettingsState((value) => ({ ...value, connectionStatus: "failed" }));
       setBalance({
         status: "error",
@@ -1765,6 +1835,7 @@ export function usePrototypeState() {
     if (!UXP_RUNTIME) return undefined;
     let disposed = false;
     let inFlight = false;
+    const missingPolls = new Map<string, number>();
     const refreshActiveDocument = () => {
       if (disposed || inFlight) return;
       inFlight = true;
@@ -1777,14 +1848,26 @@ export function usePrototypeState() {
           const knownIds = new Set(openIds);
           for (const documentId of Object.keys(documentSessionsRef.current)) {
             if (!knownIds.has(documentId)) {
-              cleanupDocumentResources(documentId);
-              setDocumentSessions((sessions) => removeDocumentSession(sessions, documentId));
+              const misses = (missingPolls.get(documentId) ?? 0) + 1;
+              missingPolls.set(documentId, misses);
+              if (misses >= 2) {
+                if (cleanupDocumentResources(documentId)) {
+                  setDocumentSessions((sessions) => removeDocumentSession(sessions, documentId));
+                }
+              }
+            } else {
+              missingPolls.delete(documentId);
             }
           }
         }
         if (next) activateDocumentContext(next);
         else if (openIds?.length === 0) setActiveDocumentId(null);
-        else if (openIds && activeDocumentIdRef.current && !openIds.includes(activeDocumentIdRef.current)) {
+        else if (
+          openIds
+          && activeDocumentIdRef.current
+          && !openIds.includes(activeDocumentIdRef.current)
+          && (missingPolls.get(activeDocumentIdRef.current) ?? 0) >= 2
+        ) {
           setActiveDocumentId(null);
         }
       }).finally(() => {

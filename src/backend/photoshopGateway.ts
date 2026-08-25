@@ -10,14 +10,32 @@ import type {
 } from "./contracts";
 
 export class PhotoshopGateway implements PhotoshopWriter {
-  private previewModalQueue: Promise<void> = Promise.resolve();
+  private hostModalQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly runtime: PhotoshopRuntime) {}
 
-  private enqueuePreviewModal<T>(operation: () => Promise<T>): Promise<T> {
-    const run = this.previewModalQueue.then(operation, operation);
-    this.previewModalQueue = run.then(() => undefined, () => undefined);
+  private enqueueHostModal<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.hostModalQueue.then(operation, operation);
+    this.hostModalQueue = run.then(() => undefined, () => undefined);
     return run;
+  }
+
+  private async executeAsModal(operation: () => Promise<void>, name: string) {
+    for (let attempt = 0; ; attempt += 1) {
+      let callbackStarted = false;
+      try {
+        await this.runtime.executeAsModal(async () => {
+          callbackStarted = true;
+          await operation();
+        }, name);
+        return;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const retryable = /modal state|modal operation|already.*modal/i.test(message);
+        if (!retryable || callbackStarted || attempt >= 2) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 80 * (attempt + 1)));
+      }
+    }
   }
 
   getContext() {
@@ -37,11 +55,13 @@ export class PhotoshopGateway implements PhotoshopWriter {
   ): Promise<CapturedReference> {
     let capture: CapturedReference | undefined;
     try {
-      await this.runtime.executeAsModal(async () => {
-        capture = owner
-          ? await this.runtime.captureVisibleComposite(scope, documentId, owner)
-          : await this.runtime.captureVisibleComposite(scope, documentId);
-      }, scope === "selection" ? "截取当前选区" : "截取当前画面");
+      await this.enqueueHostModal(async () => {
+        await this.executeAsModal(async () => {
+          capture = owner
+            ? await this.runtime.captureVisibleComposite(scope, documentId, owner)
+            : await this.runtime.captureVisibleComposite(scope, documentId);
+        }, scope === "selection" ? "截取当前选区" : "截取当前画面");
+      });
       if (!capture) throw new Error("Photoshop 未返回参考图");
       return capture;
     } finally {
@@ -57,7 +77,7 @@ export class PhotoshopGateway implements PhotoshopWriter {
     owner?: AssetOwner,
   ) {
     if (!assets.length) throw new Error("没有可插入的候选图");
-    return this.enqueuePreviewModal(async () => {
+    return this.enqueueHostModal(async () => {
       let layerIds: string[] = [];
       let activeDocumentId: string | undefined;
       try {
@@ -67,7 +87,7 @@ export class PhotoshopGateway implements PhotoshopWriter {
             : await this.runtime.createDocumentFromImages(assets);
           activeDocumentId = (await this.runtime.getContext()).documentId;
         } else {
-          await this.runtime.executeAsModal(async () => {
+          await this.executeAsModal(async () => {
             layerIds = owner
               ? await this.runtime.insertIntoCurrentDocument(assets, documentId, owner)
               : await this.runtime.insertIntoCurrentDocument(assets, documentId);
@@ -91,8 +111,8 @@ export class PhotoshopGateway implements PhotoshopWriter {
   }
 
   async preview(session: PhotoshopPreviewSession, activeLayerId: string) {
-    await this.enqueuePreviewModal(async () => {
-      await this.runtime.executeAsModal(
+    await this.enqueueHostModal(async () => {
+      await this.executeAsModal(
         () => this.runtime.setPreviewLayer(session.documentId, session.layerIds, activeLayerId),
         "切换生成候选",
       );
@@ -100,8 +120,8 @@ export class PhotoshopGateway implements PhotoshopWriter {
   }
 
   async discardPreview(session: PhotoshopPreviewSession, keepLayerId?: string) {
-    await this.enqueuePreviewModal(async () => {
-      await this.runtime.executeAsModal(
+    await this.enqueueHostModal(async () => {
+      await this.executeAsModal(
         () => this.runtime.discardPreviewLayers(session.documentId, session.layerIds, keepLayerId),
         keepLayerId ? "确认生成候选" : "取消生成候选",
       );

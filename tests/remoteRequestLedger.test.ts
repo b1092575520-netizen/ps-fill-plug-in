@@ -131,4 +131,19 @@ describe("remote request ledger", () => {
       vi.fn(async () => undefined),
     )).rejects.toThrow("已有一个付费远程任务");
   });
+
+  it("reconciles terminal provider aliases and releases the account lock", async () => {
+    const memory = memoryStorage();
+    const coordinator = new RemoteRequestCoordinator(memory.storage, () => NOW);
+    await expect(coordinator.run(audit("reconcile"), "gpt-image-2-oai", async (controls) => {
+      await controls.beforeGenerationPost();
+      await controls.taskAccepted("task-reconcile");
+      throw new TypeError("network reset");
+    })).rejects.toThrow("network reset");
+
+    expect(coordinator.isBusy()).toBe(true);
+    await coordinator.reconcileProviderTask("task-reconcile", " SUCCESS ");
+    expect(coordinator.isBusy()).toBe(false);
+    expect(coordinator.snapshot()[0]).toMatchObject({ status: "completed" });
+  });
 });

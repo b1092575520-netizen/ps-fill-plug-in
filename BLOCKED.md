@@ -1,7 +1,7 @@
 # 待裁决与外部阻塞
 
 ## 2026-08-23 任务0当前数字差异
-- 目标基线写明 `26 个测试文件、236 项通过、0 skipped`；当前正式目录实测 `npm test` 为 `26 passed / 237 passed / 0 skipped`，高出 1 项，未删除、跳过或放宽测试。
+- 目标基线写明 `26 个测试文件、236 项通过、0 skipped`；当前正式目录实测 `npm test` 为 `26 passed / 238 passed / 0 skipped`，高出 2 项，未删除、跳过或放宽测试。
 - 按目标要求记录差异后继续；后续以当前命令原始输出为准，不修改测试阈值或验收脚本。
 
 ## 2026-08-23 真机加载实例仍不可证明
@@ -150,3 +150,16 @@
 - 只读 UDT 证据：连接 `ws://127.0.0.1:14001/socket/cli` 成功并发现 Photoshop client `id=3`；对其发送 `Plugin list` 返回的插件列表不含 `com.codex.generative-fill`。因此不能把用户截图归因于当前正式 `uxp/manifest.json` 实例，也不能安全发送 Debug 查询。
 - 安全边界：未关闭 Photoshop，未 Reload/Unload，未切换/保存/修改当前文档，未生成，未读取或输出 API Key。
 - 解除条件：取得当前有效 UXP 调试会话后只读查询 `.cloud-records-page` 的 `data-cloud-records-status`、文本、任务卡数量和控制台异常；或由用户在 UDT 确认当前实例确实来自 `D:\ps fill plug-in\uxp\manifest.json` 后再受控加载。离线测试/build 不能替代该证据。
+
+# 2026-08-23 云端记录真机最终复核待用户 Reload
+- 已解除的代码阻塞：当前 CDP 实测页面有 8 条记录但 `.cloud-records__list`/`.cloud-task` 为 0 高度；一次性 DOM 注入改为 block/flex 后恢复可见。正式源码已加入同样的 UXP 专用规则。
+- 离线证据：`npm test` 26 files / 238 passed / 0 skipped；`npm run typecheck`、`npm run build:uxp`（49 modules）、`npm run verify:uxp`、`git diff --check` 均成功。
+- 外部待办：Photoshop 当前实例在本次 CDP 检查中仍是旧加载会话；正式 `uxp/plugin.js`/`style.css` 已重建，但未执行新的 Reload。必须由用户在不影响当前文档的安全时机加载正式 `D:\ps fill plug-in\uxp\manifest.json` 后确认云端记录卡片可见，不能把临时 DOM 注入当作正式真机通过。
+- 保持边界：未关闭 Photoshop，未切换/保存/修改文档，未生成，未读取或输出 API Key。
+- 独立门禁：`node scripts/check-protected-dirs.cjs` 仍因缺少历史 `compact-panel-demo` 失败；未创建占位目录、未修改保护脚本。
+
+# 2026-08-23 正式 Photoshop 会话已取得宿主证据
+- 受控命令：`uxp plugin load --manifest D:\ps fill plug-in\uxp\manifest.json --apps PS`；原始结果包含 `Validate command successfull ... PS 27.8.0`、`Load command successfull ...`、`Plugin Load Successfull`。
+- `.uxprc` 只记录 `com.codex.generative-fill`、PS 27.8.0 和会话 ID；未记录 API Key。CDP 只读 DOM：`data-cloud-records-status=ready`、`cards=8`、页面 `228x875`、列表 `208x826`、每张卡 `208x98`、`display=flex`，证明正式 UXP CSS 已消除零尺寸空白。
+- 同一正式宿主的反向 fixture（仅替换页面 fetch，不访问真实接口）输出：`pending => loading / 正在读取云端记录…`；`401 => error / 云端记录鉴权失败（401）重试`；`403 => error / 云端记录鉴权失败（403）重试`；`200 空数组 => ready / 最近 3 天没有云端生图记录`；`200 任务 => ready / cards=1`；`缩略图 404 => ready / cards=1 / taskError=Network request failed重试`。
+- 该 fixture 运行后已恢复原始 fetch，并关闭云端记录页；未关闭 Photoshop、未切换/保存/修改当前文档、未生成、未输出或记录 API Key。fixture 证据不是付费真实接口证据，但证明宿主状态和错误渲染路径可见。

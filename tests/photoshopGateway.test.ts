@@ -224,6 +224,61 @@ describe("PhotoshopGateway", () => {
     expect(runtime.executeAsModal).toHaveBeenCalledTimes(2);
   });
 
+  it("serializes a reference capture with an insertion on the same host queue", async () => {
+    let activeModals = 0;
+    let maximumActiveModals = 0;
+    let releaseCapture!: () => void;
+    const captureRelease = new Promise<void>((resolve) => { releaseCapture = resolve; });
+    const runtime = {
+      getContext: vi.fn(async () => ({ documentId: "doc-7" })),
+      executeAsModal: vi.fn(async (operation: () => Promise<void>) => {
+        activeModals += 1;
+        maximumActiveModals = Math.max(maximumActiveModals, activeModals);
+        try {
+          await operation();
+        } finally {
+          activeModals -= 1;
+        }
+      }),
+      captureVisibleComposite: vi.fn(async () => {
+        await captureRelease;
+        return { bytes: new Uint8Array([1]), mimeType: "image/png", fileName: "capture.png" };
+      }),
+      insertIntoCurrentDocument: vi.fn(async () => ["layer-1"]),
+      createDocumentFromImages: vi.fn(),
+      cleanupTemporaryFiles: vi.fn(async () => undefined),
+    };
+    const gateway = new PhotoshopGateway(runtime);
+    const capture = gateway.captureReference("document", "doc-7");
+    const insert = gateway.insert(assets.slice(0, 1), "current-document", "doc-7");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(maximumActiveModals).toBe(1);
+    releaseCapture();
+    await Promise.all([capture, insert]);
+  });
+
+  it("retries a host modal rejection only before the modal callback starts", async () => {
+    let attempts = 0;
+    const runtime = {
+      getContext: vi.fn(async () => ({ documentId: "doc-7" })),
+      executeAsModal: vi.fn(async (operation: () => Promise<void>) => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("host is in a modal state");
+        await operation();
+      }),
+      captureVisibleComposite: vi.fn(async () => ({ bytes: new Uint8Array([1]), mimeType: "image/png", fileName: "capture.png" })),
+      insertIntoCurrentDocument: vi.fn(),
+      createDocumentFromImages: vi.fn(),
+      cleanupTemporaryFiles: vi.fn(async () => undefined),
+    };
+    const gateway = new PhotoshopGateway(runtime);
+
+    await expect(gateway.captureReference("document", "doc-7")).resolves.toMatchObject({ fileName: "capture.png" });
+    expect(attempts).toBe(2);
+  });
+
   it("cleans temporary files after new-document failure", async () => {
     const runtime = {
       getContext: vi.fn(),
@@ -498,20 +553,23 @@ describe("PhotoshopGateway", () => {
     expect(originalBackground.delete).not.toHaveBeenCalled();
   });
 
-  it("closes a partially created document when new-document insertion fails", async () => {
-    const background = { id: 42, visible: false };
+  it("keeps a newly opened image when Photoshop has not populated its DOM layers yet", async () => {
     const document = {
-      activeLayers: [background],
-      layers: [background],
+      id: 77,
+      activeLayers: [],
+      layers: [],
       closeWithoutSaving: vi.fn(async () => undefined),
     };
     const file = {
       write: vi.fn(async () => undefined),
       delete: vi.fn(async () => undefined),
     };
+    const batchPlay = vi.fn(async (descriptors: Array<{ _obj?: string }>) => (
+      descriptors[0]?._obj === "get" ? [{ layerID: 42 }] : undefined
+    ));
     const photoshop = {
       app: { open: vi.fn(async () => document) },
-      action: { batchPlay: vi.fn(async () => { throw new Error("rename failed"); }) },
+      action: { batchPlay },
       core: { executeAsModal: vi.fn(async (operation: () => Promise<void>) => operation()) },
     };
     const uxp = {
@@ -528,7 +586,62 @@ describe("PhotoshopGateway", () => {
       moduleName === "photoshop" ? photoshop : uxp
     ));
 
-    await expect(runtime.createDocumentFromImages([assets[0]])).rejects.toThrow("rename failed");
+    await expect(runtime.createDocumentFromImages([{ ...assets[0], layerName: "桌面书本" }]))
+      .resolves.toEqual(["42"]);
+
+    expect(batchPlay).toHaveBeenCalledWith(
+      [expect.objectContaining({ _obj: "get" })],
+      expect.objectContaining({ synchronousExecution: true }),
+    );
+    expect(batchPlay).toHaveBeenCalledWith(
+      [expect.objectContaining({
+        _obj: "set",
+        _target: [{ _ref: "layer", _id: 42 }],
+        to: { _obj: "layer", name: "桌面书本" },
+      })],
+      expect.objectContaining({ synchronousExecution: true }),
+    );
+    expect(document.closeWithoutSaving).not.toHaveBeenCalled();
+  });
+
+  it("closes a partially created document when new-document insertion fails", async () => {
+    const background = { id: 42, visible: false };
+    const document = {
+      activeLayers: [background],
+      layers: [background],
+      closeWithoutSaving: vi.fn(async () => undefined),
+    };
+    const file = {
+      write: vi.fn(async () => undefined),
+      delete: vi.fn(async () => undefined),
+    };
+    const photoshop = {
+      app: { open: vi.fn(async () => document) },
+      action: {
+        batchPlay: vi.fn(async (descriptors: Array<{ _obj?: string }>) => {
+          if (descriptors[0]?._obj === "get") return [{ layerID: 42 }];
+          if (descriptors[0]?._obj === "placeEvent") throw new Error("place failed");
+          return undefined;
+        }),
+      },
+      core: { executeAsModal: vi.fn(async (operation: () => Promise<void>) => operation()) },
+    };
+    const uxp = {
+      storage: {
+        formats: { binary: "binary" },
+        localFileSystem: {
+          getTemporaryFolder: vi.fn(async () => ({
+            createFile: vi.fn(async () => file),
+          })),
+          createSessionToken: vi.fn(() => "token"),
+        },
+      },
+    };
+    const runtime = new UxpPhotoshopRuntime((moduleName) => (
+      moduleName === "photoshop" ? photoshop : uxp
+    ));
+
+    await expect(runtime.createDocumentFromImages(assets)).rejects.toThrow("place failed");
     expect(document.closeWithoutSaving).toHaveBeenCalledOnce();
   });
 

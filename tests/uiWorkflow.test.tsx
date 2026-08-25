@@ -769,6 +769,14 @@ describe("compact workflow UI", () => {
     expect(css).toMatch(/body\.uxp-shell \.property-section\s*\{[^}]*padding:\s*4px 9px 4px/s);
   });
 
+  it("keeps UXP cloud records cards from collapsing to zero dimensions", () => {
+    const css = readFileSync("src/styles.css", "utf8");
+    expect(css).toMatch(/body\.uxp-shell \.cloud-records-page\s*\{[^}]*display:\s*block[^}]*width:\s*100%[^}]*height:\s*auto[^}]*min-height:\s*0/s);
+    expect(css).toMatch(/body\.uxp-shell \.cloud-records__list\s*\{[^}]*display:\s*block[^}]*width:\s*100%[^}]*height:\s*auto/s);
+    expect(css).toMatch(/body\.uxp-shell \.cloud-task\s*\{[^}]*display:\s*flex[^}]*width:\s*100%[^}]*height:\s*98px[^}]*min-height:\s*98px/s);
+    expect(css).toMatch(/body\.uxp-shell \.cloud-task__preview\s*\{[^}]*flex:\s*0 0 86px/s);
+  });
+
   it("paints every UXP viewport layer opaquely during live panel resize", () => {
     const css = readFileSync("src/styles.css", "utf8");
     expect(css).toMatch(/body\.uxp-shell,\s*body\.uxp-shell #root,\s*body\.uxp-shell \.prototype-stage,\s*body\.uxp-shell \.dock-panel\s*\{[^}]*background-color:\s*var\(--panel\)/s);
