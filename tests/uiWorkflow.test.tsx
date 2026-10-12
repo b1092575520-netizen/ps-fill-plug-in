@@ -653,7 +653,7 @@ describe("compact workflow UI", () => {
     })} />); });
     const cardMeta = tree.root.findByProps({ className: "cloud-task__meta" });
     expect(cardMeta.findByType("strong").children).toContain("gpt-image-2-oai");
-    expect(cardMeta.findByProps({ className: "cloud-task__status is-succeeded" }).children).toContain("succeeded");
+    expect(cardMeta.findByProps({ className: "cloud-task__status is-succeeded" }).children).toContain("已完成");
     expect(cardMeta.findByType("code").children).toContain("task-plugin-1");
     expect(tree.root.findByProps({ className: "cloud-task__error" }).findAllByType("span").some((node) => node.children.includes("图片下载失败（503）"))).toBe(true);
     act(() => tree.root.findByProps({ "aria-label": "重试任务 task-plugin-1 图片" }).props.onClick());
@@ -692,7 +692,7 @@ describe("compact workflow UI", () => {
     expect(tree.root.findAll((node) => node.type === "small" && node.children.join("") === "创建 时间未知")).toHaveLength(1);
   });
 
-  it("renders only twelve cloud cards before load-more reveals the next page", () => {
+  it("paginates cloud cards without accumulating full-size image previews", () => {
     const tasks = Array.from({ length: 13 }, (_, index) => ({
       taskId: `task-${index + 1}`,
       model: "model",
@@ -715,9 +715,13 @@ describe("compact workflow UI", () => {
     })} />); });
     expect(tree.root.findAllByType("article")).toHaveLength(12);
     expect(loadCloudTaskImage).toHaveBeenCalledTimes(12);
-    act(() => tree.root.findByProps({ "aria-label": "加载更多云端记录" }).props.onClick());
-    expect(tree.root.findAllByType("article")).toHaveLength(13);
+    act(() => tree.root.findByProps({ title: "下一页" }).props.onClick());
+    expect(tree.root.findAllByType("article")).toHaveLength(1);
     expect(loadCloudTaskImage).toHaveBeenCalledTimes(13);
+    expect(tree.root.findByType("code").children).toContain("task-13");
+    act(() => tree.root.findByProps({ title: "上一页" }).props.onClick());
+    expect(tree.root.findAllByType("article")).toHaveLength(12);
+    act(() => tree.unmount());
   });
 
   it("uses explicit model wording and a compact integer balance", () => {
@@ -773,8 +777,8 @@ describe("compact workflow UI", () => {
     const css = readFileSync("src/styles.css", "utf8");
     expect(css).toMatch(/body\.uxp-shell \.cloud-records-page\s*\{[^}]*display:\s*block[^}]*width:\s*100%[^}]*height:\s*auto[^}]*min-height:\s*0/s);
     expect(css).toMatch(/body\.uxp-shell \.cloud-records__list\s*\{[^}]*display:\s*block[^}]*width:\s*100%[^}]*height:\s*auto/s);
-    expect(css).toMatch(/body\.uxp-shell \.cloud-task\s*\{[^}]*display:\s*flex[^}]*width:\s*100%[^}]*height:\s*98px[^}]*min-height:\s*98px/s);
-    expect(css).toMatch(/body\.uxp-shell \.cloud-task__preview\s*\{[^}]*flex:\s*0 0 86px/s);
+    expect(css).toMatch(/body\.uxp-shell \.cloud-task\s*\{[^}]*display:\s*block[^}]*width:\s*100%[^}]*height:\s*auto[^}]*min-height:\s*238px/s);
+    expect(css).toMatch(/body\.uxp-shell \.cloud-task__preview\s*\{[^}]*width:\s*100%[^}]*height:\s*132px/s);
   });
 
   it("paints every UXP viewport layer opaquely during live panel resize", () => {

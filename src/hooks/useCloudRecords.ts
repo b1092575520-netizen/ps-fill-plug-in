@@ -83,6 +83,7 @@ export interface CloudRecordsController {
   setOpen: (open: boolean) => void;
   refresh: () => void;
   loadTaskImage: (task: CloudTaskRecord) => void;
+  clearImages: () => void;
 }
 
 export function useCloudRecords({
@@ -158,7 +159,6 @@ export function useCloudRecords({
       timedOut = true;
       controller.abort();
       if (revision === requestRevisionRef.current) {
-        setRecords([]);
         setStatus("error");
         setError("云端记录请求超时，请检查网络后重试");
       }
@@ -175,12 +175,11 @@ export function useCloudRecords({
     }).catch((requestError) => {
       if (revision !== requestRevisionRef.current) return;
       if ((requestError as Error).name === "AbortError" && !timedOut) return;
-      setRecords([]);
       setStatus("error");
       setError(timedOut ? "云端记录请求超时，请检查网络后重试" : requestError instanceof Error ? requestError.message : "云端记录读取失败");
     }).finally(() => {
       if (recordsAbortRef.current === controller) recordsAbortRef.current = null;
-      if (recordsTimeoutRef.current) {
+      if (revision === requestRevisionRef.current && recordsTimeoutRef.current) {
         clearTimeout(recordsTimeoutRef.current);
         recordsTimeoutRef.current = null;
       }
@@ -260,6 +259,7 @@ export function useCloudRecords({
   pumpImageQueueRef.current = pumpImageQueue;
 
   const loadTaskImage = useCallback((task: CloudTaskRecord) => {
+    if (!["succeeded", "completed", "success"].includes(task.status.toLowerCase())) return;
     if (imageAbortControllersRef.current.has(task.taskId) || queuedTaskIdsRef.current.has(task.taskId)) return;
     const currentImage = imagesRef.current[task.taskId];
     if (currentImage?.status === "ready" || currentImage?.status === "loading") return;
@@ -274,7 +274,7 @@ export function useCloudRecords({
   useEffect(() => {
     if (!open || status !== "ready") return;
     records.slice(0, 12).forEach(loadTaskImage);
-  }, [loadTaskImage, open, records, status]);
+  }, [open, status, loadTaskImage]);
 
   useEffect(() => {
     requestRevisionRef.current += 1;
@@ -298,5 +298,5 @@ export function useCloudRecords({
     cacheRef.current?.releaseAll();
   }, []);
 
-  return { open, records, status, error, images, setOpen, refresh, loadTaskImage };
+  return { open, records, status, error, images, setOpen, refresh, loadTaskImage, clearImages: releaseImages };
 }

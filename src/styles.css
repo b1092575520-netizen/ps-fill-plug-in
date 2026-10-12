@@ -288,7 +288,7 @@ select { color-scheme: dark; }
 .cloud-records__list { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
 .cloud-task { display: grid; min-width: 0; grid-template-columns: 86px minmax(0, 1fr); gap: 8px; padding: 6px; border: 1px solid var(--line-soft); border-radius: 6px; background: var(--panel-2); }
 .cloud-task__preview { display: flex; width: 86px; height: 86px; align-items: center; justify-content: center; overflow: hidden; border-radius: 4px; background: #161719; font-size: 9px; text-align: center; color: var(--muted-2); }
-.cloud-task__preview img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.cloud-image-frame { display: block; width: 100%; height: 100%; min-width: 0; }
 .cloud-task__preview button { width: 100%; height: 100%; padding: 5px; background: transparent; font-size: 9px; color: var(--muted); }
 .cloud-task__meta { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
 .cloud-task__meta > div { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 5px; }
@@ -298,6 +298,28 @@ select { color-scheme: dark; }
 .cloud-task__status { flex: 0 0 auto; padding: 2px 4px; border-radius: 4px; background: var(--panel-3); font-size: 9px; color: var(--muted); }
 .cloud-task__status.is-succeeded, .cloud-task__status.is-completed { color: var(--green); }
 .cloud-task__status.is-failed, .cloud-task__status.is-cancelled { color: #ef7474; }
+.cloud-records__search { width: 100%; min-width: 0; min-height: 32px; padding: 7px 9px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; color: var(--text); font-size: 11px; }
+.cloud-records__filters { display: flex; border-bottom: 1px solid var(--line); }
+.cloud-records__filters button { flex: 1; min-width: 0; min-height: 32px; padding: 5px 2px; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-size: 11px; }
+.cloud-records__filters button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--green); }
+.cloud-task__retrieve { display: flex; justify-content: space-between; align-items: center; min-height: 28px; width: 100%; border-radius: 4px; border: 1px solid var(--line); background: var(--panel-3); color: var(--text); font-size: 11px; padding: 3px 7px; }
+.cloud-detail__preview { display: flex; width: 100%; height: 220px; align-items: center; justify-content: center; background: #18191b; color: var(--muted); font-size: 12px; }
+.cloud-detail__preview.is-expanded { height: 480px; }
+.cloud-detail__preview > button { width: 100%; height: 100%; padding: 0; background: transparent; }
+.cloud-detail__pager { display: flex; align-items: center; justify-content: center; gap: 14px; min-height: 32px; color: var(--muted); font-size: 11px; }
+.cloud-detail__pager button { width: 32px; height: 30px; padding: 0; background: var(--panel-3); border: 1px solid var(--line); border-radius: 4px; color: var(--text); font-size: 20px; }
+.cloud-detail__info { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.cloud-detail__info strong { font-size: 12px; overflow-wrap: anywhere; }
+.cloud-detail__info small, .cloud-detail__info code { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
+.cloud-detail__info p { max-height: 96px; overflow: auto; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cloud-detail__message { padding: 8px 0; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; color: var(--muted); }
+.cloud-detail__message.is-error { color: var(--warning); }
+.cloud-detail__message.is-done { color: var(--green); }
+.cloud-detail__actions { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--line); }
+.cloud-detail__actions button, .cloud-detail__secondary { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; min-height: 34px; padding: 6px 8px; background: var(--panel-3); border: 1px solid var(--line); color: var(--text); border-radius: 4px; font-size: 12px; }
+.cloud-detail__actions .cloud-detail__primary { background: #326c5c; border-color: #42836f; color: #fff; }
+.cloud-records-page button:disabled { opacity: .4; cursor: default; }
+.cloud-records-page button:focus-visible, .cloud-records__search:focus-visible { outline: 2px solid var(--green); outline-offset: 1px; }
 
 .panel-scroll {
   display: flex;
@@ -773,17 +795,29 @@ body.uxp-shell .cloud-records__list {
   width: 100%;
   height: auto;
 }
+body.uxp-shell .cloud-records-page > * + * { margin-top: 8px; }
 body.uxp-shell .cloud-task {
-  display: flex;
+  display: block;
   width: 100%;
-  height: 98px;
-  min-height: 98px;
+  height: auto;
+  min-height: 238px;
+  padding: 8px;
   flex: none;
   gap: 8px;
 }
 body.uxp-shell .cloud-task + .cloud-task { margin-top: 6px; }
-body.uxp-shell .cloud-task__preview { flex: 0 0 86px; }
-body.uxp-shell .cloud-task__meta { flex: 1 1 auto; }
+body.uxp-shell .cloud-task__preview { width: 100%; height: 132px; }
+body.uxp-shell .cloud-task__meta { display: block; width: 100%; margin-top: 8px; }
+body.uxp-shell .cloud-task__meta > * + * { margin-top: 5px; }
+body.uxp-shell .cloud-task__meta strong { font-size: 12px; }
+body.uxp-shell .cloud-task__meta small { display: block; font-size: 10px; line-height: 14px; }
+body.uxp-shell .cloud-task__meta code { font-size: 10px; line-height: 14px; }
+body.uxp-shell .cloud-task__status { font-size: 10px; }
+body.uxp-shell .cloud-task__retrieve { height: 32px; margin-top: 8px; font-size: 12px; }
+body.uxp-shell .cloud-detail__info { display: block; width: 100%; }
+body.uxp-shell .cloud-detail__info > * { display: block; margin-top: 5px; line-height: 16px; }
+body.uxp-shell .cloud-detail__actions { display: block; width: 100%; }
+body.uxp-shell .cloud-detail__actions button + button { margin-top: 7px; }
 
 body.uxp-shell .parameter-grid,
 body.uxp-shell .candidate-grid {
@@ -1086,7 +1120,9 @@ body.uxp-shell,
 body.uxp-shell #root,
 body.uxp-shell .prototype-stage,
 body.uxp-shell .dock-panel { background-color: var(--panel); }
-body.uxp-shell .dock-panel { width: 100%; max-width: none; height: 100%; box-shadow: none; }
+body.uxp-shell, body.uxp-shell #root { width: 100%; height: 100%; }
+body.uxp-shell .prototype-stage { display: block; width: 100%; height: 100%; min-height: 0; padding: 0; }
+body.uxp-shell .dock-panel { width: 100%; min-width: 0; max-width: none; height: 100%; box-shadow: none; border: 0; }
 body.uxp-shell .panel-section,
 body.uxp-shell .property-section,
 body.uxp-shell .panel-action-bar { margin: 0; }

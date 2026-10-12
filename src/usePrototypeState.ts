@@ -14,6 +14,7 @@ import { DocumentSessionCoordinator, type DocumentTaskToken } from "./documentSe
 import { PreviewCoordinator } from "./previewCoordinator";
 import { hashPrompt, remoteRequestCoordinator } from "./remoteRequestLedger";
 import { useCloudRecords } from "./hooks/useCloudRecords";
+import { useCloudLibrary } from "./hooks/useCloudLibrary";
 export { loadCloudTaskRecords } from "./hooks/useCloudRecords";
 import {
   applyRememberedSettings,
@@ -306,6 +307,7 @@ export function usePrototypeState() {
     photoshopGatewayRef.current = createPhotoshopGateway(assetLifecycleRef.current);
   }
   const photoshopGateway = photoshopGatewayRef.current;
+  const cloudLibrary = useCloudLibrary({ settings, writer: photoshopGateway, runtimeMode: UXP_RUNTIME ? "uxp" : "browser" });
   const sessionCoordinatorRef = useRef(new DocumentSessionCoordinator());
   const previewCoordinatorRef = useRef<PreviewCoordinator | null>(null);
   if (!previewCoordinatorRef.current) {
@@ -1939,7 +1941,7 @@ export function usePrototypeState() {
     context, outputRatio, validationMessage,
     settings, setSettings, settingsOpen, setSettingsOpen,
     cloudRecordsOpen, setCloudRecordsOpen, cloudRecords, cloudRecordsStatus, cloudRecordsError,
-    cloudTaskImages, refreshCloudTasks, loadCloudTaskImage,
+    cloudTaskImages, refreshCloudTasks, loadCloudTaskImage, cloudLibrary, clearCloudImages: cloudRecordsController.clearImages,
     rememberLastSettings, generationSettingsReady, setRememberLastSettings, restoreDefaultGenerationSettings,
     promptNotes, promptNotesReady, savePromptNote, deletePromptNote,
     togglePromptNotePinned, reorderPromptNote,

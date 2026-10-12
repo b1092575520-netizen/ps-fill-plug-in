@@ -139,6 +139,8 @@ export interface CloudTaskRecord {
   createdAt: number | null;
   completedAt: number | null;
   thumbnailUrl: string | null;
+  resultUrls?: string[];
+  prompt?: string;
   origin: "plugin" | "external-or-unknown";
 }
 

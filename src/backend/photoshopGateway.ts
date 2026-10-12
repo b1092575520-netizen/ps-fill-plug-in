@@ -31,7 +31,8 @@ export class PhotoshopGateway implements PhotoshopWriter {
         return;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        const retryable = /modal state|modal operation|already.*modal/i.test(message);
+        const modalErrorNumber = typeof error === "object" && error !== null && "number" in error ? error.number : undefined;
+        const retryable = modalErrorNumber === 9 || /modal state|modal operation|modal command|already.*modal/i.test(message);
         if (!retryable || callbackStarted || attempt >= 2) throw error;
         await new Promise((resolve) => setTimeout(resolve, 80 * (attempt + 1)));
       }

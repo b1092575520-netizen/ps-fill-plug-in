@@ -371,6 +371,20 @@ export class OpenAIImageProvider {
     return this.normalizeCloudTasks(items);
   }
 
+  async recoverTaskImage(taskId: string, imageIndex: number, signal: AbortSignal) {
+    const task = await this.getTask(taskId, signal);
+    if (!["succeeded", "completed", "success"].includes(task.status.toLowerCase())) {
+      throw new Error("该任务尚未成功，暂时无法取回图片");
+    }
+    const urls = task.resultUrls ?? (task.thumbnailUrl ? [task.thumbnailUrl] : []);
+    const url = urls[imageIndex];
+    if (!url) throw new Error("该结果不存在或已过期，请刷新云端记录");
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") throw new Error("云端结果地址不是 HTTPS");
+    const asset = await this.downloadImage(url, imageIndex, signal);
+    return { task, asset: { ...asset, id: `cloud-${taskId}-${imageIndex + 1}`, layerName: `云端图片 ${taskId.slice(-12)} · ${imageIndex + 1}` } };
+  }
+
   async generate(
     request: ImageGenerationRequest,
     signal: AbortSignal,
@@ -547,6 +561,10 @@ export class OpenAIImageProvider {
         createdAt: timestamp(task.created_at ?? task.createdAt ?? task.create_time ?? task.created_time),
         completedAt: timestamp(task.completed_at ?? task.completedAt ?? task.finished_at ?? task.finishedAt),
         thumbnailUrl: typeof first.url === "string" ? first.url : null,
+        ...(rawData.length > 1 ? { resultUrls: rawData.flatMap((item: unknown) => (
+          item && typeof item === "object" && "url" in item && typeof item.url === "string" ? [item.url] : []
+        )) } : {}),
+        ...(typeof task.prompt === "string" ? { prompt: task.prompt } : {}),
         origin: "external-or-unknown" as const,
       }];
     });
@@ -569,22 +587,44 @@ export class OpenAIImageProvider {
         return { id: `generated-${index}`, bytes: decodeBase64(item.b64_json), mimeType: "image/png" };
       }
       if (!item.url) throw new Error("API 返回了无法识别的图片结果");
-      const response = await this.fetchFn(item.url, { signal });
-      if (!response.ok) throw new Error(`下载生成图片失败（${response.status}）`);
-      const mimeType = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
-      if (!mimeType?.startsWith("image/")) {
-        throw new Error("API 返回的文件不是图片");
-      }
-      if (!["image/png", "image/jpeg", "image/jpg", "image/webp"].includes(mimeType)) {
-        throw new Error(`API 返回了不支持的图片格式（${mimeType}）`);
-      }
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      if (!bytes.length) throw new Error("API 返回了空图片文件");
-      return {
-        id: `generated-${index}`,
-        bytes,
-        mimeType,
-      };
+      return this.downloadImage(item.url, index, signal);
     }));
+  }
+
+  private async downloadImage(url: string, index: number, signal: AbortSignal): Promise<GeneratedImageAsset> {
+    for (let attempt = 0; ; attempt += 1) {
+      ensureNotAborted(signal);
+      let retryable = true;
+      try {
+        const response = await this.fetchFn(url, { signal });
+        retryable = response.status === 408 || response.status === 429 || response.status >= 500;
+        if (!response.ok) throw new Error(`下载生成图片失败（${response.status}）`);
+        retryable = false;
+        const mimeType = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
+        if (!mimeType?.startsWith("image/")) {
+          throw new Error("API 返回的文件不是图片");
+        }
+        if (!["image/png", "image/jpeg", "image/jpg", "image/webp"].includes(mimeType)) {
+          throw new Error(`API 返回了不支持的图片格式（${mimeType}）`);
+        }
+        retryable = true;
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        retryable = false;
+        if (!bytes.length) throw new Error("API 返回了空图片文件");
+        return {
+          id: `generated-${index}`,
+          bytes,
+          mimeType,
+        };
+      } catch (error) {
+        ensureNotAborted(signal);
+        if (!retryable) throw error;
+        if (attempt >= 2) {
+          throw new Error("云端图片已生成，但下载失败（已重试两次）。请保留云端记录，不要重复生成。");
+        }
+        // Re-fetch only this result; never repeat the paid generation POST.
+        await this.sleep(1000 * (attempt + 1), signal);
+      }
+    }
   }
 }

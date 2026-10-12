@@ -16,6 +16,64 @@ function json(data: unknown, status = 200) {
 }
 
 describe("OpenAIImageProvider", () => {
+  it("recovers the selected cloud result from fresh task detail without a generation POST or CDN credentials", async () => {
+    const fetchFn = vi.fn().mockResolvedValueOnce(json({ id: "saved-task", status: "succeeded", result: { data: [
+      { url: "https://cdn.example/first.png" }, { url: "https://cdn.example/second.png" },
+    ] } })).mockResolvedValueOnce(new Response(new Uint8Array([2]), { headers: { "content-type": "image/png" } }));
+    const provider = new OpenAIImageProvider(config, { fetchFn });
+    const result = await provider.recoverTaskImage("saved-task", 1, new AbortController().signal);
+    expect(result.asset.bytes).toEqual(new Uint8Array([2]));
+    expect(result.task.resultUrls).toHaveLength(2);
+    expect(fetchFn.mock.calls[1][0]).toBe("https://cdn.example/second.png");
+    expect(fetchFn.mock.calls[1][1]?.headers).toBeUndefined();
+    expect(fetchFn.mock.calls.some(([url]) => String(url).includes("/images/generations"))).toBe(false);
+  });
+
+  it("never downloads unsuccessful tasks or nonexistent result slots", async () => {
+    for (const status of ["running", "failed", "succeeded"]) {
+      const fetchFn = vi.fn().mockResolvedValueOnce(json({ id: "task", status, result: { data: [{ url: "https://cdn.example/a.png" }] } }));
+      const provider = new OpenAIImageProvider(config, { fetchFn });
+      await expect(provider.recoverTaskImage("task", 3, new AbortController().signal)).rejects.toThrow();
+      expect(fetchFn).toHaveBeenCalledOnce();
+    }
+  });
+  it.each(["connection", "body", "server"])("recovers a failed result download (%s) without generating again", async (stage) => {
+    const url = "https://cdn.example/result.png";
+    const fetchFn = vi.fn().mockResolvedValueOnce(json({ data: [{ url }] }));
+    if (stage === "connection") fetchFn.mockRejectedValueOnce(new TypeError("Network request failed"));
+    else if (stage === "body") fetchFn.mockResolvedValueOnce({
+      ok: true, status: 200, headers: new Headers({ "content-type": "image/png" }),
+      arrayBuffer: async () => { throw new TypeError("Network request failed"); },
+    });
+    else fetchFn.mockResolvedValueOnce(new Response(null, { status: 503 }));
+    fetchFn.mockResolvedValueOnce(new Response(new Uint8Array([1, 2]), { headers: { "content-type": "image/png" } }));
+    const sleep = vi.fn(async () => undefined);
+    const provider = new OpenAIImageProvider(config, { fetchFn, sleep });
+    const result = await provider.generate({ prompt: "test", model: config.model, n: 1, responseFormat: "url" }, new AbortController().signal);
+    expect(result[0].bytes).toEqual(new Uint8Array([1, 2]));
+    expect(fetchFn.mock.calls.filter(([target]) => String(target).includes("/images/generations"))).toHaveLength(1);
+    expect(fetchFn.mock.calls.slice(1).map(([target]) => target)).toEqual([url, url]);
+    expect(sleep).toHaveBeenCalledOnce();
+  });
+
+  it("bounds download retries and reports cloud success separately", async () => {
+    const fetchFn = vi.fn().mockResolvedValueOnce(json({ data: [{ url: "https://cdn.example/result.png" }] }))
+      .mockRejectedValue(new TypeError("Network request failed"));
+    const provider = new OpenAIImageProvider(config, { fetchFn, sleep: async () => undefined });
+    await expect(provider.generate({ prompt: "test", model: config.model, n: 1, responseFormat: "url" }, new AbortController().signal))
+      .rejects.toThrow("云端图片已生成，但下载失败");
+    expect(fetchFn).toHaveBeenCalledTimes(4);
+  });
+
+  it("stops download retries when cancelled during backoff", async () => {
+    const controller = new AbortController();
+    const fetchFn = vi.fn().mockResolvedValueOnce(json({ data: [{ url: "https://cdn.example/result.png" }] }))
+      .mockRejectedValue(new TypeError("Network request failed"));
+    const provider = new OpenAIImageProvider(config, { fetchFn, sleep: async () => { controller.abort(); } });
+    await expect(provider.generate({ prompt: "test", model: config.model, n: 1, responseFormat: "url" }, controller.signal)).rejects.toThrow();
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps recent cloud history and retains unknown-time records at the end", () => {
     const now = Date.UTC(2026, 7, 14, 10, 0, 0);
     const record = (taskId: string, createdAt: number | null) => ({

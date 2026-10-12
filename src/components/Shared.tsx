@@ -3,6 +3,7 @@ import { capabilitySourceLabel } from "../backend/providerCapabilities";
 import type { PrototypeController } from "../usePrototypeState";
 import { MODE_META, QUALITY_META, type GenerationMode, type ImageQuality, type PromptNote, type ThemeKey } from "../types";
 import { UxpDropdown } from "./UxpDropdown";
+import { CloudImage } from "./CloudImage";
 
 const UXP_ICONS = {
   "arrow-down": "↓",
@@ -111,19 +112,34 @@ function cloudTaskTime(value: number | null) {
 }
 
 export function CloudRecordsPage({ controller }: { controller: PrototypeController }) {
-  const [visibleCount, setVisibleCount] = useState(12);
+  const [page, setPage] = useState(0);
+  const [filter, setFilter] = useState("all");
+  const [query, setQuery] = useState("");
+  const [expanded, setExpanded] = useState(false);
+  const library = controller.cloudLibrary;
+  const group = (value: string) => ["succeeded", "completed", "success"].includes(value.toLowerCase()) ? "success"
+    : ["failed", "error", "cancelled", "canceled"].includes(value.toLowerCase()) ? "failed" : "pending";
+  const statusLabel = (value: string) => ({ succeeded: "已完成", completed: "已完成", success: "已完成", failed: "失败", error: "失败", cancelled: "已取消", canceled: "已取消", running: "生成中", processing: "处理中", queued: "排队中", pending: "等待中" }[value.toLowerCase()] ?? "状态待确认");
   const requestedTaskIdsRef = useRef(new Set<string>());
   // Keep the page useful even when an older UXP host has not populated the
   // newly-added controller fields yet. A blank page hides the real failure.
   const status = controller.cloudRecordsStatus ?? "loading";
   const records = Array.isArray(controller.cloudRecords) ? controller.cloudRecords : [];
   const images = controller.cloudTaskImages ?? {};
-  const visibleRecords = records.slice(0, visibleCount);
+  const filtered = records.filter((task) => (filter === "all" || group(task.status) === filter)
+    && `${task.model} ${task.taskId} ${task.prompt ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()))
+    .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+  const pages = Math.max(1, Math.ceil(filtered.length / 12));
+  const actualPage = Math.min(page, pages - 1);
+  const visibleRecords = filtered.slice(actualPage * 12, (actualPage + 1) * 12);
   const visibleTaskIds = visibleRecords.map((task) => task.taskId).join("|");
+  useEffect(() => {
+    requestedTaskIdsRef.current.clear();
+    controller.clearCloudImages?.();
+  }, [visibleTaskIds]);
   useEffect(() => {
     if (status === "loading") {
       requestedTaskIdsRef.current.clear();
-      setVisibleCount(12);
       return;
     }
     if (status !== "ready") return;
@@ -137,16 +153,40 @@ export function CloudRecordsPage({ controller }: { controller: PrototypeControll
   return (
     <section className="cloud-records-page" data-cloud-records-status={status}>
       <header className="cloud-records__header">
-        <span><strong>云端生图记录</strong><small>最近 3 天</small></span>
+        <span><strong>{library?.task ? "云端原图" : "云端生图记录"}</strong><small>{library?.task ? "已生成结果" : `最近 3 天 · ${records.length} 个任务`}</small></span>
         <div>
-          <button type="button" aria-label="刷新云端生图记录" onClick={controller.refreshCloudTasks} disabled={status === "loading"}>
+          <button type="button" title="刷新云端记录" aria-label="刷新云端生图记录" onClick={controller.refreshCloudTasks} disabled={status === "loading" || library?.busy}>
             <UxpIcon name="refresh" className={status === "loading" ? "spin" : ""} />
           </button>
-          <button type="button" aria-label="返回生成界面" onClick={() => controller.setCloudRecordsOpen(false)}>
+          <button type="button" title={library?.task ? "返回云端列表" : "返回生成界面"} aria-label={library?.task ? "返回云端列表" : "返回生成界面"} disabled={library?.writing} onClick={() => { if (library?.task) library.close(); else controller.setCloudRecordsOpen(false); }}>
             <UxpIcon name="close" />
           </button>
         </div>
       </header>
+      {library?.task ? <>
+        <div className={`cloud-detail__preview${expanded ? " is-expanded" : ""}`}>
+          {library.url ? <button type="button" title={expanded ? "缩小预览" : "放大预览"} onClick={() => setExpanded(!expanded)}><CloudImage key={library.url} src={library.url} alt={`生成结果 ${library.index + 1}`} /></button>
+            : <span>{library.phase === "downloading" ? "正在取回原图…" : "原图尚未取回"}</span>}
+        </div>
+        {(library.task.resultUrls?.length ?? 1) > 1 && <div className="cloud-detail__pager">
+          <button type="button" aria-label="上一张结果" title="上一张结果" disabled={library.busy || library.index === 0} onClick={() => library.select(library.task!, library.index - 1)}>‹</button>
+          <span>{library.index + 1} / {library.task.resultUrls?.length || 1}</span>
+          <button type="button" aria-label="下一张结果" title="下一张结果" disabled={library.busy || library.index + 1 >= (library.task.resultUrls?.length || 1)} onClick={() => library.select(library.task!, library.index + 1)}>›</button>
+        </div>}
+        <div className="cloud-detail__info"><strong>{library.task.model}</strong><small>{cloudTaskTime(library.task.createdAt)}</small><code>{library.task.taskId}</code>{library.task.prompt && <p>{library.task.prompt}</p>}</div>
+        {library.message && <div className={`cloud-detail__message is-${library.phase}`} role={library.phase === "error" ? "alert" : "status"}>{library.message}</div>}
+        {library.phase === "downloading" && <button className="cloud-detail__secondary" type="button" onClick={library.close}>取消取回</button>}
+        {!library.hasAsset && library.phase === "error" && <button className="cloud-detail__secondary" type="button" onClick={() => library.select(library.task!, library.index)}>重试取回原图</button>}
+        <div className="cloud-detail__actions">
+          <button type="button" className="cloud-detail__primary" disabled={!library.hasAsset || library.busy} onClick={() => library.transfer("current-document")}><UxpIcon name="layers" />插入当前文档</button>
+          <button type="button" disabled={!library.hasAsset || library.busy} onClick={() => library.transfer("new-document")}><UxpIcon name="plus" />打开为新文档</button>
+          <button type="button" disabled={!library.hasAsset || library.busy} onClick={() => library.transfer("save")}><UxpIcon name="arrow-down" />保存原图</button>
+        </div>
+      </> : <>
+      <input className="cloud-records__search" type="text" aria-label="搜索云端记录" placeholder="搜索模型、任务或提示词" value={query} onChange={(event) => { setQuery(event.target.value); setPage(0); }} />
+      <div className="cloud-records__filters" role="tablist" aria-label="任务状态">
+        {[["all", "全部"], ["success", "已完成"], ["pending", "进行中"], ["failed", "失败"]].map(([value, label]) => <button key={value} role="tab" aria-selected={filter === value} type="button" onClick={() => { setFilter(value); setPage(0); }}>{label}</button>)}
+      </div>
       {status === "idle" && <div className="cloud-records__state" aria-live="polite">正在准备云端记录…</div>}
       {status === "loading" && <div className="cloud-records__state" aria-live="polite">正在读取云端记录…</div>}
       {status === "error" && (
@@ -159,6 +199,7 @@ export function CloudRecordsPage({ controller }: { controller: PrototypeControll
         <div className="cloud-records__state">最近 3 天没有云端生图记录</div>
       )}
       {!knownStatus && <div className="cloud-records__state" aria-live="polite">正在读取云端记录…</div>}
+      {status === "ready" && records.length > 0 && !filtered.length && <div className="cloud-records__state">没有符合条件的记录</div>}
       <div className="cloud-records__list">
         {visibleRecords.map((task) => {
           const image = images[task.taskId];
@@ -166,25 +207,24 @@ export function CloudRecordsPage({ controller }: { controller: PrototypeControll
             <article className="cloud-task" key={task.taskId}>
               <div className="cloud-task__preview">
                 {image?.status === "ready" && image.url
-                  ? <img src={image.url} alt="云端任务缩略图" />
+                  ? <button type="button" title="查看原图" aria-label={`查看任务 ${task.taskId} 原图`} onClick={() => library?.select(task)}><CloudImage key={image.url} src={image.url} alt="云端任务缩略图" /></button>
                   : image?.status === "error"
                     ? <span className="cloud-task__error"><span>{image.error || "缩略图加载失败"}</span><button type="button" aria-label={`重试任务 ${task.taskId} 图片`} onClick={() => controller.loadCloudTaskImage(task)}>重试</button></span>
-                    : <span>加载中…</span>}
+                    : <span>{group(task.status) === "success" ? "加载中…" : statusLabel(task.status)}</span>}
               </div>
               <div className="cloud-task__meta">
-                <div><strong>{task.model || "未知模型"}</strong><span className={`cloud-task__status is-${task.status}`}>{task.status}</span></div>
+                <div><strong title={task.model}>{task.model || "未知模型"}</strong><span className={`cloud-task__status is-${task.status}`}>{statusLabel(task.status)}</span></div>
                 <small>创建 {cloudTaskTime(task.createdAt)}</small>
-                <small>完成 {cloudTaskTime(task.completedAt)}</small>
                 <code title={task.taskId}>{task.taskId}</code>
-                <small>{task.origin === "plugin" ? "本插件提交" : "其他来源或无法确认"}</small>
+                <small>{task.origin === "plugin" ? "本插件" : "云端任务"}{task.resultUrls?.length ? ` · ${task.resultUrls.length} 张` : ""}</small>
+                {group(task.status) === "success" && <button className="cloud-task__retrieve" type="button" onClick={() => library?.select(task)}>取回原图 <UxpIcon name="arrow-down" /></button>}
               </div>
             </article>
           );
         })}
       </div>
-      {visibleCount < records.length && (
-        <button className="cloud-records__more" type="button" aria-label="加载更多云端记录" onClick={() => setVisibleCount((count) => count + 12)}>加载更多</button>
-      )}
+      {pages > 1 && <nav className="cloud-detail__pager" aria-label="历史分页"><button type="button" title="上一页" disabled={actualPage === 0} onClick={() => setPage(actualPage - 1)}>‹</button><span>{actualPage + 1} / {pages}</span><button type="button" title="下一页" disabled={actualPage + 1 >= pages} onClick={() => setPage(actualPage + 1)}>›</button></nav>}
+      </>}
     </section>
   );
 }

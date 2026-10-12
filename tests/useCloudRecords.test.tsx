@@ -163,6 +163,32 @@ describe("useCloudRecords", () => {
     }
   });
 
+  it("keeps existing records and the newest timeout when an older refresh finishes", async () => {
+    vi.useFakeTimers();
+    let tree!: ReturnType<typeof create>;
+    try {
+      let current!: CloudRecordsController;
+      const records: CloudTaskRecord[] = [{ taskId: "kept", model: "model", status: "running", createdAt: null, completedAt: null, thumbnailUrl: null, origin: "plugin" }];
+      let resolveOlder!: (records: CloudTaskRecord[]) => void;
+      const loadRecords = vi.fn()
+        .mockResolvedValueOnce(records)
+        .mockImplementationOnce(() => new Promise<CloudTaskRecord[]>(resolve => { resolveOlder = resolve; }))
+        .mockImplementationOnce(() => new Promise<CloudTaskRecord[]>(() => undefined));
+      await act(async () => { tree = create(<Harness apiKey="key" expose={value => { current = value; }} loadRecords={loadRecords} />); });
+      await act(async () => current.setOpen(true));
+      await act(async () => current.refresh());
+      await act(async () => current.refresh());
+      await act(async () => resolveOlder([]));
+      await act(async () => { vi.advanceTimersByTime(30_000); });
+      expect(current.status).toBe("error");
+      expect(current.error).toContain("超时");
+      expect(current.records).toEqual(records);
+    } finally {
+      if (tree) act(() => tree.unmount());
+      vi.useRealTimers();
+    }
+  });
+
   it("invalidates an in-flight request when the API key is cleared", async () => {
     const requests: Array<{ resolve: (records: CloudTaskRecord[]) => void; signal: AbortSignal }> = [];
     const loadRecords = vi.fn((_identity: { baseUrl: string; apiKey: string }, signal: AbortSignal) => (

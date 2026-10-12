@@ -14,6 +14,26 @@ import { filesFromUxpEntries } from "./referenceSelection";
 
 type UxpRequire = (moduleName: string) => any;
 
+export async function saveGeneratedImage(asset: GeneratedImageAsset): Promise<boolean> {
+  const extension = asset.mimeType.includes("jpeg") ? "jpg" : asset.mimeType.split("/")[1];
+  const filename = `${asset.id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 80)}.${extension}`;
+  const requireFn = getUxpRequire();
+  if (!requireFn) {
+    const url = URL.createObjectURL(new Blob([new Uint8Array(asset.bytes).buffer], { type: asset.mimeType }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return true;
+  }
+  const uxp = requireFn("uxp");
+  const file = await uxp.storage.localFileSystem.getFileForSaving(filename, { types: [extension] });
+  if (!file) return false;
+  await file.write(new Uint8Array(asset.bytes).buffer, { format: uxp.storage.formats.binary });
+  return true;
+}
+
 function getUxpRequire(): UxpRequire | null {
   const candidate = (globalThis as typeof globalThis & { require?: UxpRequire }).require;
   if (typeof candidate !== "function") return null;
@@ -155,11 +175,79 @@ export class UxpPhotoshopRuntime implements PhotoshopRuntime {
     const source = this.findDocument(documentId);
     const selection = scope === "selection" ? this.selectionBounds(source) : null;
     if (scope === "selection" && !selection) throw new Error("请先在 Photoshop 中建立选区");
-    const folder = await this.uxp.storage.localFileSystem.getTemporaryFolder();
     const isDocumentReference = scope === "document";
     const fileName = `ps-fill-${isDocumentReference ? "document" : "selection"}-${this.nextTemporaryStamp()}.${isDocumentReference ? "jpg" : "png"}`;
-    const file = await folder.createFile(fileName, { overwrite: true });
-    this.trackTemporaryFile(file, owner);
+    // Capture the composite in memory on modern Photoshop. saveAs can succeed
+    // while its temporary File entry is unreadable; repeating that path cannot
+    // recover a persistent ENOENT. Selection capture retains its PNG semantics.
+    const imaging = this.photoshop.imaging;
+    if (isDocumentReference && imaging?.getPixels && imaging?.encodeImageData) {
+      const width = Number(source.width);
+      const height = Number(source.height);
+      if (!(width > 0 && height > 0 && Number.isFinite(width) && Number.isFinite(height))) {
+        throw new Error("无法读取当前文档尺寸");
+      }
+      // Flatten a disposable copy to retain transparent canvas margins:
+      // getPixels on the original can trim them even with applyAlpha enabled.
+      const snapshot = await source.duplicate(`参考快照 ${Date.now()}`);
+      const capture = async (maxEdge: number) => {
+        let imageData: any;
+        try {
+          const result = await imaging.getPixels({
+            documentID: snapshot.id,
+            sourceBounds: { left: 0, top: 0, right: width, bottom: height },
+            targetSize: width >= height ? { width: Math.min(width, maxEdge) } : { height: Math.min(height, maxEdge) },
+            colorSpace: "RGB", colorProfile: "sRGB IEC61966-2.1", componentSize: 8, applyAlpha: true,
+          });
+          imageData = result.imageData;
+          if (!imageData) throw new Error("Photoshop 未返回当前画面像素");
+          const encoded = await imaging.encodeImageData({ imageData, base64: false });
+          if (typeof encoded === "string") throw new Error("Photoshop 未返回二进制参考图");
+          const bytes = new Uint8Array(encoded);
+          if (!bytes.byteLength) throw new Error("当前画面编码结果为空");
+          return bytes;
+        } finally {
+          imageData?.dispose();
+        }
+      };
+      try {
+        await snapshot.flatten();
+        let bytes = await capture(3072);
+        if (bytes.byteLength > 1_800_000 && Math.max(width, height) > 2048) bytes = await capture(2048);
+        return { bytes, mimeType: "image/jpeg", fileName };
+      } catch (error) {
+        throw new Error(`读取当前画面失败：${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        await snapshot.closeWithoutSaving();
+      }
+    }
+    let file: any;
+    const exportReference = async (save: (entry: any) => Promise<void>): Promise<ArrayBuffer> => {
+      for (let attempt = 0; ; attempt += 1) {
+        let stage = "创建临时参考图";
+        try {
+          if (!file) {
+            const folder = await this.uxp.storage.localFileSystem.getTemporaryFolder();
+            file = await folder.createFile(fileName, { overwrite: true });
+            this.trackTemporaryFile(file, owner);
+          }
+          stage = "导出当前画面";
+          await save(file);
+          stage = "读取临时参考图";
+          const data = await file.read({ format: this.uxp.storage.formats.binary });
+          if (!data.byteLength) throw new Error("临时参考图为空");
+          return data;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          // Retry only disposable snapshot I/O, never the paid generation request.
+          if (!/no such file|ENOENT|file not found/i.test(message) || attempt >= 2) {
+            throw new Error(`${stage}失败：${message}`);
+          }
+          file = undefined;
+          await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+        }
+      }
+    };
     const duplicate = await source.duplicate(`参考快照 ${Date.now()}`);
     try {
       if (selection) {
@@ -184,8 +272,7 @@ export class UxpPhotoshopRuntime implements PhotoshopRuntime {
           exportedHeight = Math.max(1, Math.round(height * scale));
           await duplicate.resizeImage(exportedWidth, exportedHeight);
         }
-        await duplicate.saveAs.jpg(file, { quality: 9 }, true);
-        data = await file.read({ format: this.uxp.storage.formats.binary });
+        data = await exportReference((entry) => duplicate.saveAs.jpg(entry, { quality: 9 }, true));
         if (data.byteLength > 1_800_000) {
           const exportedLongestEdge = Math.max(exportedWidth, exportedHeight);
           if (exportedLongestEdge > 2048) {
@@ -194,12 +281,10 @@ export class UxpPhotoshopRuntime implements PhotoshopRuntime {
             exportedHeight = Math.max(1, Math.round(exportedHeight * scale));
             await duplicate.resizeImage(exportedWidth, exportedHeight);
           }
-          await duplicate.saveAs.jpg(file, { quality: 8 }, true);
-          data = await file.read({ format: this.uxp.storage.formats.binary });
+          data = await exportReference((entry) => duplicate.saveAs.jpg(entry, { quality: 8 }, true));
         }
       } else {
-        await duplicate.saveAs.png(file, { compression: 6, interlaced: false }, true);
-        data = await file.read({ format: this.uxp.storage.formats.binary });
+        data = await exportReference((entry) => duplicate.saveAs.png(entry, { compression: 6, interlaced: false }, true));
       }
       return {
         bytes: new Uint8Array(data),

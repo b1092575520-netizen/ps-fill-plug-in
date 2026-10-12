@@ -9,6 +9,45 @@ const assets = [
 ];
 
 describe("PhotoshopGateway", () => {
+  it.each(["create", "save", "read"])("recreates snapshot files after a transient missing file during %s", async (failureStage) => {
+    const missing = new Error("Error: no such file or directory");
+    const read = vi.fn().mockResolvedValue(new Uint8Array([1, 2]).buffer);
+    const file = { read, delete: vi.fn() };
+    const createFile = vi.fn().mockResolvedValue(file);
+    const save = vi.fn().mockResolvedValue(undefined);
+    ({ create: createFile, save, read })[failureStage as "create" | "save" | "read"].mockRejectedValueOnce(missing);
+    const duplicate = { flatten: vi.fn(), saveAs: { jpg: save }, closeWithoutSaving: vi.fn() };
+    const document = { id: 7, width: 100, height: 100, duplicate: vi.fn(async () => duplicate) };
+    const getTemporaryFolder = vi.fn(async () => ({ createFile }));
+    const runtime = new UxpPhotoshopRuntime((name) => name === "photoshop"
+      ? { app: { documents: [document], activeDocument: document } }
+      : { storage: { formats: { binary: "binary" }, localFileSystem: { getTemporaryFolder } } });
+    const capture = await runtime.captureVisibleComposite("document", "7");
+    expect(capture.bytes).toEqual(new Uint8Array([1, 2]));
+    expect(getTemporaryFolder).toHaveBeenCalledTimes(2);
+    expect(document.duplicate).toHaveBeenCalledOnce();
+    expect(duplicate.closeWithoutSaving).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["no such file or directory", 3],
+    ["permission denied", 1],
+  ] as const)("bounds snapshot retries and preserves the read error: %s", async (message, attempts) => {
+    const read = vi.fn().mockRejectedValue(new Error(message));
+    const save = vi.fn();
+    const duplicate = { flatten: vi.fn(), saveAs: { jpg: save }, closeWithoutSaving: vi.fn() };
+    const document = { id: 7, width: 100, height: 100, duplicate: vi.fn(async () => duplicate) };
+    const runtime = new UxpPhotoshopRuntime((name) => name === "photoshop"
+      ? { app: { documents: [document], activeDocument: document } }
+      : { storage: { formats: { binary: "binary" }, localFileSystem: {
+        getTemporaryFolder: async () => ({ createFile: async () => ({ read }) }),
+      } } });
+    await expect(runtime.captureVisibleComposite("document", "7")).rejects.toThrow(`读取临时参考图失败：${message}`);
+    expect(read).toHaveBeenCalledTimes(attempts);
+    expect(save).toHaveBeenCalledTimes(attempts);
+    expect(duplicate.closeWithoutSaving).toHaveBeenCalledOnce();
+  });
+
   it("startup residual cleanup deletes only plugin-prefixed temporary entries", async () => {
     const owned = { name: "ps-fill-generated-123-0.png", delete: vi.fn(async () => undefined) };
     const lockedOwned = { name: "ps-fill-selection-locked.png", delete: vi.fn(async () => { throw new Error("locked"); }) };
@@ -259,13 +298,17 @@ describe("PhotoshopGateway", () => {
     await Promise.all([capture, insert]);
   });
 
-  it("retries a host modal rejection only before the modal callback starts", async () => {
+  it.each([
+    new Error("host is in a modal state"),
+    new Error("Plugin: com.adobe.test is running a modal command"),
+    Object.assign(new Error("Photoshop 暂忙"), { number: 9 }),
+  ])("retries a host modal rejection only before the modal callback starts: %s", async (modalError) => {
     let attempts = 0;
     const runtime = {
       getContext: vi.fn(async () => ({ documentId: "doc-7" })),
       executeAsModal: vi.fn(async (operation: () => Promise<void>) => {
         attempts += 1;
-        if (attempts === 1) throw new Error("host is in a modal state");
+        if (attempts === 1) throw modalError;
         await operation();
       }),
       captureVisibleComposite: vi.fn(async () => ({ bytes: new Uint8Array([1]), mimeType: "image/png", fileName: "capture.png" })),
