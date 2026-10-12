@@ -78,4 +78,19 @@ describe("AssetLifecycleManager", () => {
     ]);
     expect(upload).toHaveBeenCalledOnce();
   });
+
+  it("uploads again once a cached reference URL could have expired", async () => {
+    let now = 1_000;
+    const manager = new AssetLifecycleManager({}, () => now);
+    const upload = vi.fn()
+      .mockResolvedValueOnce("https://example.test/first.png")
+      .mockResolvedValueOnce("https://example.test/second.png");
+
+    await expect(manager.reuseUpload("doc-a", "blob-1", upload)).resolves.toBe("https://example.test/first.png");
+    now += 44 * 60 * 1000;
+    await expect(manager.reuseUpload("doc-a", "blob-1", upload)).resolves.toBe("https://example.test/first.png");
+    now += 2 * 60 * 1000;
+    await expect(manager.reuseUpload("doc-a", "blob-1", upload)).resolves.toBe("https://example.test/second.png");
+    expect(upload).toHaveBeenCalledTimes(2);
+  });
 });

@@ -72,6 +72,10 @@ export interface AssetLifecycleStats {
   previewLayers: number;
 }
 
+// Uploaded references expire on the host after one hour; stop reusing a
+// cached URL well before that so a later task never points at a deleted file.
+const UPLOAD_REUSE_MS = 45 * 60 * 1000;
+
 const DEFAULT_LIMITS: ImageLimits = {
   maxCandidates: 4,
   maxImageBytes: 32 * 1024 * 1024,
@@ -81,10 +85,13 @@ const DEFAULT_LIMITS: ImageLimits = {
 
 export class AssetLifecycleManager {
   private readonly assets = new Map<string, ManagedAsset>();
-  private readonly uploadCache = new Map<string, Promise<string>>();
+  private readonly uploadCache = new Map<string, { url: Promise<string>; uploadedAt: number }>();
   private readonly limits: ImageLimits;
 
-  constructor(limits: Partial<ImageLimits> = {}) {
+  constructor(
+    limits: Partial<ImageLimits> = {},
+    private readonly now: () => number = Date.now,
+  ) {
     this.limits = { ...DEFAULT_LIMITS, ...limits };
   }
 
@@ -124,13 +131,16 @@ export class AssetLifecycleManager {
   reuseUpload(documentId: string, fingerprint: string, upload: () => Promise<string>) {
     const key = `${documentId}\u0000${fingerprint}`;
     const existing = this.uploadCache.get(key);
-    if (existing) return existing;
-    const current = upload().catch((error) => {
-      this.uploadCache.delete(key);
-      throw error;
-    });
-    this.uploadCache.set(key, current);
-    return current;
+    if (existing && existing.uploadedAt >= this.now() - UPLOAD_REUSE_MS) return existing.url;
+    const entry = {
+      uploadedAt: this.now(),
+      url: upload().catch((error) => {
+        if (this.uploadCache.get(key) === entry) this.uploadCache.delete(key);
+        throw error;
+      }),
+    };
+    this.uploadCache.set(key, entry);
+    return entry.url;
   }
 
   cleanupJob(documentId: string, jobId: string, revision?: number) {
