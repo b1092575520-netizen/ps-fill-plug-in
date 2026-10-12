@@ -3,6 +3,21 @@ import type { GenerationMode } from "./types";
 const STORAGE_KEY = "generative-fill.remote-request-ledger.v1";
 const DATA_FILE_NAME = "remote-request-ledger.v1.json";
 const RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
+// An image task never runs this long; past it the account lock is released
+// even if the provider could not be reached to confirm the final status.
+const LOCK_MAX_MS = 20 * 60 * 1000;
+// A request that went out without an answer can never be confirmed. Hold the
+// account briefly so an immediate retry cannot double-charge, then release.
+const UNCONFIRMED_LOCK_MS = 3 * 60 * 1000;
+const UNRESOLVED_STATUSES: RemoteRequestStatus[] = ["submitting", "running", "downloading", "uncertain"];
+
+export const BUSY_MESSAGE = "上一张图还在心宝生成中，出图后会自动解锁，请稍候";
+
+export const UNCONFIRMED_BUSY_MESSAGE =
+  "上次提交没收到心宝的确认，可能已扣分。请先到云端记录看看，3 分钟内暂不能重新生成";
+
+export const UNCONFIRMED_SUBMISSION_MESSAGE =
+  "提交后没收到心宝的确认，可能已扣分。请先到云端记录看看有没有这张图，3 分钟后才能重新生成";
 
 export type RemoteRequestStatus =
   | "submitting"
@@ -152,6 +167,7 @@ export class RemoteRequestCoordinator {
   private loaded: Promise<void> | null = null;
   private activeRequestId: string | null = null;
   private readonly inFlight = new Map<string, Promise<unknown>>();
+  private readonly detachedListeners = new Set<() => void>();
 
   constructor(
     private readonly storage: RemoteRequestStorage = defaultRemoteRequestStorage,
@@ -166,8 +182,8 @@ export class RemoteRequestCoordinator {
     await this.ensureLoaded();
     const duplicate = this.inFlight.get(audit.localRequestId) as Promise<T> | undefined;
     if (duplicate) return duplicate;
-    if (this.activeRequestId) {
-      throw new Error("已有一个付费远程任务正在运行，请等待完成后再试");
+    if (this.isBusy()) {
+      throw new Error(this.busyMessage());
     }
     if (this.records.some((record) => record.localRequestId === audit.localRequestId && record.postCount > 0)) {
       throw new Error("该生成请求已经提交过，已阻止重复扣费");
@@ -225,15 +241,32 @@ export class RemoteRequestCoordinator {
         if (current.postCount === 0 || current.status === "failed") {
           current.status = "failed";
           this.release(audit.localRequestId);
-        } else {
-          current.status = "uncertain";
+          await this.persist();
+          throw error;
         }
+        current.status = "uncertain";
         await this.persist();
-        throw error;
+        // Without a task ID the outcome can never be reconciled; isBusy()
+        // releases the account after UNCONFIRMED_LOCK_MS instead.
+        if (current.providerTaskId || (error as Error)?.name === "AbortError") throw error;
+        const reason = error instanceof Error && error.message ? `（${error.message}）` : "";
+        throw new Error(`${UNCONFIRMED_SUBMISSION_MESSAGE}${reason}`);
       });
     this.inFlight.set(audit.localRequestId, promise);
-    void promise.finally(() => this.inFlight.delete(audit.localRequestId)).catch(() => undefined);
+    void promise.finally(() => {
+      this.inFlight.delete(audit.localRequestId);
+      const record = this.records.find((item) => item.localRequestId === audit.localRequestId);
+      if (record?.providerTaskId && UNRESOLVED_STATUSES.includes(record.status)) {
+        this.detachedListeners.forEach((listener) => listener());
+      }
+    }).catch(() => undefined);
     return promise;
+  }
+
+  /** Called when a submitted task stops being polled before it finished. */
+  onDetachedPending(listener: () => void) {
+    this.detachedListeners.add(listener);
+    return () => { this.detachedListeners.delete(listener); };
   }
 
   snapshot() {
@@ -245,30 +278,88 @@ export class RemoteRequestCoordinator {
     return this.snapshot();
   }
 
-  async reconcileProviderTask(taskId: string, status: string) {
+  /**
+   * Applies a provider status to the matching record. Returns the terminal
+   * outcome when this call resolved a previously unresolved record.
+   */
+  async reconcileProviderTask(taskId: string, status: string): Promise<"completed" | "failed" | null> {
     await this.ensureLoaded();
     const record = this.records.find((item) => item.providerTaskId === taskId);
-    if (!record) return;
+    if (!record) return null;
+    const wasUnresolved = UNRESOLVED_STATUSES.includes(record.status);
     const normalizedStatus = status.trim().toLowerCase();
     if (["succeeded", "completed", "success"].includes(normalizedStatus)) record.status = "completed";
     else if (["failed", "error", "cancelled", "canceled", "not_found"].includes(normalizedStatus)) record.status = "failed";
-    else return;
+    else return null;
     this.release(record.localRequestId);
     await this.persist();
+    return wasUnresolved ? record.status as "completed" | "failed" : null;
+  }
+
+  /**
+   * Provider task IDs whose outcome is still open and that no running
+   * generation is polling (cancelled, failed while waiting, or left over
+   * from a previous Photoshop session).
+   */
+  async detachedPendingTaskIds() {
+    await this.ensureLoaded();
+    const cutoff = this.now() - LOCK_MAX_MS;
+    return this.records.flatMap((record) => (
+      record.providerTaskId
+      && UNRESOLVED_STATUSES.includes(record.status)
+      && record.submittedAt >= cutoff
+      && !this.inFlight.has(record.localRequestId)
+        ? [record.providerTaskId]
+        : []
+    ));
+  }
+
+  /**
+   * "accepted": the provider returned a task ID; "sent": the paid request went
+   * out but its answer never arrived; "none": nothing was submitted.
+   */
+  submissionState(localRequestId: string): "none" | "sent" | "accepted" {
+    const record = this.records.find((item) => item.localRequestId === localRequestId);
+    if (!record || record.postCount === 0) return "none";
+    return record.providerTaskId ? "accepted" : "sent";
   }
 
   isBusy() {
-    return this.activeRequestId !== null;
+    if (this.activeRequestId === null) return false;
+    const active = this.records.find((record) => record.localRequestId === this.activeRequestId);
+    if (!this.inFlight.has(this.activeRequestId) && (!active || !this.withinLock(active))) {
+      this.activeRequestId = null;
+      return false;
+    }
+    return true;
+  }
+
+  busyMessage() {
+    const active = this.records.find((record) => record.localRequestId === this.activeRequestId);
+    return active && !active.providerTaskId && !this.inFlight.has(active.localRequestId)
+      ? UNCONFIRMED_BUSY_MESSAGE
+      : BUSY_MESSAGE;
+  }
+
+  private withinLock(record: RemoteRequestRecord) {
+    const lockMs = record.providerTaskId ? LOCK_MAX_MS : UNCONFIRMED_LOCK_MS;
+    return record.submittedAt >= this.now() - lockMs;
   }
 
   private async ensureLoaded() {
     if (!this.loaded) {
       this.loaded = this.storage.load().then((value) => {
         this.records = normalizeRemoteRequestRecords(value, this.now());
-        const unresolved = this.records.find((record) => (
-          record.postCount > 0 && ["submitting", "running", "downloading", "uncertain"].includes(record.status)
+        // Anything left open by a crash without a provider ID can never be
+        // followed up, so it only keeps the short unconfirmed lock.
+        const unresolved = this.records.filter((record) => (
+          record.postCount > 0 && UNRESOLVED_STATUSES.includes(record.status)
         ));
-        this.activeRequestId = unresolved?.localRequestId ?? null;
+        unresolved.forEach((record) => {
+          if (!record.providerTaskId) record.status = "uncertain";
+        });
+        const lockable = unresolved.find((record) => this.withinLock(record));
+        this.activeRequestId = lockable?.localRequestId ?? null;
       });
     }
     await this.loaded;

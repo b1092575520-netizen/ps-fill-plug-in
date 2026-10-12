@@ -14,6 +14,7 @@ import { DocumentSessionCoordinator, type DocumentTaskToken } from "./documentSe
 import { PreviewCoordinator } from "./previewCoordinator";
 import { hashPrompt, remoteRequestCoordinator } from "./remoteRequestLedger";
 import { useCloudRecords } from "./hooks/useCloudRecords";
+import { usePendingTaskWatcher } from "./hooks/usePendingTaskWatcher";
 import { useCloudLibrary } from "./hooks/useCloudLibrary";
 export { loadCloudTaskRecords } from "./hooks/useCloudRecords";
 import {
@@ -456,8 +457,20 @@ export function usePrototypeState() {
   const notify = useCallback((text: string, kind: ToastMessage["kind"] = "info") => {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
     setToast({ id: Date.now(), text, kind });
-    toastTimerRef.current = window.setTimeout(() => setToast(null), 2600);
+    // Long warnings explain money or recovery steps; leave time to read them.
+    const duration = Math.min(9_000, Math.max(2_600, text.length * 120));
+    toastTimerRef.current = window.setTimeout(() => setToast(null), duration);
   }, []);
+
+  usePendingTaskWatcher({
+    settings,
+    enabled: UXP_RUNTIME,
+    onResolved: ({ completed, failed }) => {
+      if (completed) notify("之前提交的图已在心宝生成好，点右上角云朵进入云端记录即可取回", "success");
+      else if (failed) notify("之前提交的任务在心宝那边失败了，现在可以重新生成", "warning");
+      refreshCloudTasksRef.current();
+    },
+  });
 
   const writeSingleCandidate = useCallback(async (documentId: string, candidate: Candidate) => {
     if (!candidate.asset) throw new Error("已生成图片资源缺失，已停止写入");
@@ -1107,7 +1120,7 @@ export function usePrototypeState() {
       return false;
     }
     if (remoteRequestCoordinator.isBusy()) {
-      notify("已有一个付费远程任务正在运行，请等待完成后再试", "warning");
+      notify(remoteRequestCoordinator.busyMessage(), "warning");
       return false;
     }
     if (resources.timer) window.clearInterval(resources.timer);
@@ -1419,7 +1432,13 @@ export function usePrototypeState() {
     resources.jobId = null;
     sessionCoordinatorRef.current.finishCancellation(token);
     if (UXP_RUNTIME && settingsRef.current.apiKey.trim()) refreshCloudTasksRef.current();
-    notify("已取消当前任务");
+    // Stopping the local wait cannot recall a request the provider already has.
+    const submission = remoteRequestCoordinator.submissionState(token.jobId);
+    notify(submission === "accepted"
+      ? "已停止等待。心宝已收到这个任务，仍会出图并扣分，出图后会提醒你到云端记录取回"
+      : submission === "sent"
+        ? "已停止等待。任务可能已提交并扣分，请稍后到云端记录查看，确认没有再重新生成"
+        : "已取消，任务还没提交，不扣分");
   }, [notify, resourcesFor, updateSession]);
 
   const activateCandidate = useCallback((id: string) => {

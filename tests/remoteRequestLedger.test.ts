@@ -96,7 +96,7 @@ describe("remote request ledger", () => {
       audit("request-b", "doc-b"),
       "gpt-image-2-oai",
       vi.fn(async () => undefined),
-    )).rejects.toThrow("已有一个付费远程任务");
+    )).rejects.toThrow("上一张图还在心宝生成中");
     resolve();
     await first;
   });
@@ -116,20 +116,83 @@ describe("remote request ledger", () => {
     expect(operation).not.toHaveBeenCalled();
   });
 
-  it("keeps the account locked when a submitted POST has an uncertain outcome", async () => {
+  it("holds an unconfirmed POST for three minutes only, including after a restart", async () => {
     const memory = memoryStorage();
-    const coordinator = new RemoteRequestCoordinator(memory.storage, () => NOW);
+    let now = NOW;
+    const coordinator = new RemoteRequestCoordinator(memory.storage, () => now);
     await expect(coordinator.run(audit("uncertain"), "gpt-image-2-oai", async (controls) => {
       await controls.beforeGenerationPost();
       throw new TypeError("network reset");
-    })).rejects.toThrow("network reset");
+    })).rejects.toThrow(/没收到心宝的确认.*network reset/);
 
     expect(coordinator.snapshot()[0]).toMatchObject({ postCount: 1, status: "uncertain" });
+    expect(coordinator.submissionState("uncertain")).toBe("sent");
     await expect(coordinator.run(
       audit("next", "doc-b"),
       "gpt-image-2-oai",
       vi.fn(async () => undefined),
-    )).rejects.toThrow("已有一个付费远程任务");
+    )).rejects.toThrow("3 分钟内暂不能重新生成");
+
+    const restarted = new RemoteRequestCoordinator(memory.storage, () => now);
+    await restarted.listRecords();
+    expect(restarted.isBusy()).toBe(true);
+
+    now = NOW + 3 * 60 * 1000 + 1;
+    expect(coordinator.isBusy()).toBe(false);
+    expect(restarted.isBusy()).toBe(false);
+    await expect(restarted.run({ ...audit("after-window"), submittedAt: now }, "gpt-image-2-oai", async () => "ok"))
+      .resolves.toBe("ok");
+  });
+
+  it("treats a 5xx answer to the paid POST as unconfirmed, never as a free failure", async () => {
+    const memory = memoryStorage();
+    const coordinator = new RemoteRequestCoordinator(memory.storage, () => NOW);
+    await expect(coordinator.run(audit("server-error"), "gpt-image-2-oai", async (controls) => {
+      await controls.beforeGenerationPost();
+      await controls.generationPostResponded(502);
+      throw new Error("请求失败（502）");
+    })).rejects.toThrow(/可能已扣分/);
+    expect(coordinator.isBusy()).toBe(true);
+  });
+
+  it("releases a 4xx rejection immediately because nothing was charged", async () => {
+    const memory = memoryStorage();
+    const coordinator = new RemoteRequestCoordinator(memory.storage, () => NOW);
+    await expect(coordinator.run(audit("rejected"), "gpt-image-2-oai", async (controls) => {
+      await controls.beforeGenerationPost();
+      await controls.generationPostResponded(400);
+      throw new Error("请求失败（400）");
+    })).rejects.toThrow("请求失败（400）");
+    expect(coordinator.isBusy()).toBe(false);
+  });
+
+  it("keeps a cancelled task with an ID locked, lists it for follow-up and notifies once detached", async () => {
+    const memory = memoryStorage();
+    let now = NOW;
+    const coordinator = new RemoteRequestCoordinator(memory.storage, () => now);
+    const listener = vi.fn();
+    coordinator.onDetachedPending(listener);
+    const controller = new AbortController();
+    const running = coordinator.run(audit("cancelled"), "gpt-image-2-oai", async (controls) => {
+      await controls.beforeGenerationPost();
+      await controls.taskAccepted("task-cancelled");
+      await new Promise((_resolve, reject) => {
+        controller.signal.addEventListener("abort", () => reject(new DOMException("已取消", "AbortError")));
+      });
+    });
+    await vi.waitFor(() => expect(coordinator.submissionState("cancelled")).toBe("accepted"));
+    expect(await coordinator.detachedPendingTaskIds()).toEqual([]);
+
+    controller.abort();
+    await expect(running).rejects.toMatchObject({ name: "AbortError" });
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledOnce());
+    expect(await coordinator.detachedPendingTaskIds()).toEqual(["task-cancelled"]);
+    expect(coordinator.isBusy()).toBe(true);
+    expect(coordinator.busyMessage()).toContain("还在心宝生成中");
+
+    now = NOW + 20 * 60 * 1000 + 1;
+    expect(await coordinator.detachedPendingTaskIds()).toEqual([]);
+    expect(coordinator.isBusy()).toBe(false);
   });
 
   it("reconciles terminal provider aliases and releases the account lock", async () => {
@@ -142,7 +205,9 @@ describe("remote request ledger", () => {
     })).rejects.toThrow("network reset");
 
     expect(coordinator.isBusy()).toBe(true);
-    await coordinator.reconcileProviderTask("task-reconcile", " SUCCESS ");
+    await expect(coordinator.reconcileProviderTask("task-reconcile", "running")).resolves.toBeNull();
+    await expect(coordinator.reconcileProviderTask("task-reconcile", " SUCCESS ")).resolves.toBe("completed");
+    await expect(coordinator.reconcileProviderTask("task-reconcile", "succeeded")).resolves.toBeNull();
     expect(coordinator.isBusy()).toBe(false);
     expect(coordinator.snapshot()[0]).toMatchObject({ status: "completed" });
   });

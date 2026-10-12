@@ -547,6 +547,45 @@ describe("usePrototypeState paid generation and write recovery", () => {
     act(() => tree.unmount());
   });
 
+  it("tells the truth about charges on cancel and reports the finished image in the background", async () => {
+    let upstreamStatus = "running";
+    const fetchFn = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const body = url.endsWith("/v1/images/generations")
+        ? { id: "task-cancelled-upstream", status: "accepted" }
+        : url.endsWith("/v1/tasks/batch-get")
+          ? { items: [{ id: "task-cancelled-upstream", status: upstreamStatus }] }
+          : { items: [] };
+      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetchFn);
+
+    let current!: PrototypeController;
+    let tree!: ReturnType<typeof create>;
+    await act(async () => { tree = create(<Harness expose={(controller) => { current = controller; }} />); });
+    await waitFor(() => current.context?.documentId === host.context.documentId, "Photoshop context was not activated");
+    act(() => current.setSettings({ ...current.settings, apiKey: "test-key", connectionStatus: "connected" }));
+    act(() => current.updateDraft({ prompt: "cancel after accept", model: "gpt-image-2-oai", count: 1 }));
+    await act(async () => undefined);
+    expect(current.startGeneration()).toBe(true);
+    await waitFor(() => fetchFn.mock.calls.some(([input]) => String(input).endsWith("/v1/images/generations")), "paid POST did not start");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+
+    // Panel timers use the captured real window timers; only the background
+    // follow-up interval runs on the faked global clock.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    act(() => current.cancelGeneration());
+    expect(current.toast?.text).toContain("仍会出图并扣分");
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(current.toast?.text).toContain("仍会出图并扣分");
+
+    upstreamStatus = "succeeded";
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+    expect(current.toast?.text).toContain("已在心宝生成好");
+    expect(fetchFn.mock.calls.filter(([input]) => String(input).endsWith("/v1/images/generations"))).toHaveLength(1);
+    act(() => tree.unmount());
+  });
+
   it("keeps a posted request locked across hook unmount and rebuild", async () => {
     const fetchFn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       if (!String(input).endsWith("/v1/images/generations")) {

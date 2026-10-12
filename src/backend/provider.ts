@@ -176,7 +176,8 @@ export class OpenAIImageProvider {
     this.fetchFn = dependencies.fetchFn ?? globalThis.fetch.bind(globalThis);
     this.sleep = dependencies.sleep ?? defaultSleep;
     const xinbao = this.isXinbaoAsync();
-    this.maxPollAttempts = dependencies.maxPollAttempts ?? (xinbao ? 30 : 60);
+    // About 10 minutes either way; a slow paid task is still worth waiting for.
+    this.maxPollAttempts = dependencies.maxPollAttempts ?? (xinbao ? 60 : 120);
     this.initialPollDelayMs = dependencies.initialPollDelayMs ?? (xinbao ? 10_000 : 5_000);
     this.pollIntervalMs = dependencies.pollIntervalMs ?? (xinbao ? 10_000 : 5_000);
     this.requestCoordinator = dependencies.requestCoordinator ?? remoteRequestCoordinator;
@@ -461,6 +462,13 @@ export class OpenAIImageProvider {
       }
       const pollingData = await parseResponse(pollResponse);
       if (!pollResponse.ok) {
+        // The paid task keeps running upstream; a busy or briefly failing
+        // status endpoint is no reason to abandon it.
+        if (pollResponse.status === 408 || pollResponse.status === 429 || pollResponse.status >= 500) {
+          onProgress(Math.min(95, 10 + Math.round((attempt + 1) * 85 / this.maxPollAttempts)));
+          nextDelayMs = this.retryDelay(pollResponse, pollingData);
+          continue;
+        }
         throw new Error(safeMessage(pollResponse.status, this.config.apiKey, pollingData.error?.message));
       }
       data = xinbao
@@ -479,14 +487,18 @@ export class OpenAIImageProvider {
         throw new Error(`图片任务失败（${status}）`);
       }
       onProgress(Math.min(95, 10 + Math.round((attempt + 1) * 85 / this.maxPollAttempts)));
-      const retryAfterSeconds = Number(pollResponse.headers.get("retry-after") || 0);
-      nextDelayMs = Math.max(
-        this.pollIntervalMs,
-        Number.isFinite(retryAfterSeconds) ? retryAfterSeconds * 1000 : 0,
-        Number(pollingData.next_poll_after_ms || data.next_poll_after_ms || 0),
-      );
+      nextDelayMs = this.retryDelay(pollResponse, pollingData, data);
     }
-    throw new Error("图片任务轮询超时");
+    throw new Error("等待出图超时（约 10 分钟）。任务还在心宝那边，出图后会提醒你到云端记录取回，请不要重复生成");
+  }
+
+  private retryDelay(response: Response, ...payloads: ProviderResponse[]) {
+    const retryAfterSeconds = Number(response.headers.get("retry-after") || 0);
+    return Math.max(
+      this.pollIntervalMs,
+      Number.isFinite(retryAfterSeconds) ? retryAfterSeconds * 1000 : 0,
+      ...payloads.map((payload) => Number(payload.next_poll_after_ms || 0)),
+    );
   }
 
   private isXinbaoAsync() {

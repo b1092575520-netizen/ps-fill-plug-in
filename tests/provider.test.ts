@@ -256,7 +256,7 @@ describe("OpenAIImageProvider", () => {
         submittedAt: firstSubmittedAt + 6_000,
         promptHash: "sha256:b",
       },
-    }, new AbortController().signal)).rejects.toThrow("已有一个付费远程任务");
+    }, new AbortController().signal)).rejects.toThrow("上一张图还在心宝生成中");
     expect(secondFetch).not.toHaveBeenCalled();
 
     finishFirst();
@@ -575,6 +575,46 @@ describe("OpenAIImageProvider", () => {
     expect(fetchFn.mock.calls.filter(([url, init]) => (
       String(url).endsWith("/v1/images/generations") && init?.method === "POST"
     ))).toHaveLength(1);
+  });
+
+  it("keeps waiting through busy or failing status checks without a second paid POST", async () => {
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(json({ id: "task-1" }))
+      .mockResolvedValueOnce(json({ error: { message: "busy" } }, 503))
+      .mockResolvedValueOnce(json({}, 429))
+      .mockResolvedValueOnce(json({ items: [{
+        id: "task-1",
+        status: "succeeded",
+        result: { data: [{ b64_json: btoa("done") }] },
+      }] }));
+    const provider = new OpenAIImageProvider(config, { fetchFn, sleep: async () => undefined, maxPollAttempts: 4 });
+    await expect(provider.generate({
+      prompt: "test", model: "gpt-image-2-oai", n: 1, responseFormat: "url",
+    }, new AbortController().signal)).resolves.toHaveLength(1);
+    expect(fetchFn.mock.calls.filter(([url]) => String(url).endsWith("/v1/images/generations"))).toHaveLength(1);
+  });
+
+  it("still stops on an authentication failure while polling", async () => {
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(json({ id: "task-1" }))
+      .mockResolvedValueOnce(json({}, 401));
+    const provider = new OpenAIImageProvider(config, { fetchFn, sleep: async () => undefined, maxPollAttempts: 4 });
+    await expect(provider.generate({
+      prompt: "test", model: "gpt-image-2-oai", n: 1, responseFormat: "url",
+    }, new AbortController().signal)).rejects.toThrow("鉴权失败（401）");
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits about ten minutes for Xinbao before handing the task to cloud records", async () => {
+    const delays: number[] = [];
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(json({ id: "task-1" }))
+      .mockResolvedValue(json({ items: [{ id: "task-1", status: "running" }] }));
+    const provider = new OpenAIImageProvider(config, { fetchFn, sleep: async (ms) => { delays.push(ms); } });
+    await expect(provider.generate({
+      prompt: "test", model: "gpt-image-2-oai", n: 1, responseFormat: "url",
+    }, new AbortController().signal)).rejects.toThrow(/超时.*云端记录/);
+    expect(delays.reduce((total, ms) => total + ms, 0)).toBe(600_000);
   });
 
   it("does not leak the API key on authentication failure", async () => {
