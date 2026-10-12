@@ -586,6 +586,54 @@ describe("usePrototypeState paid generation and write recovery", () => {
     act(() => tree.unmount());
   });
 
+  it("places the image automatically once the user returns to the original document", async () => {
+    let answerPost!: () => void;
+    const fetchFn = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/v1/images/generations")) {
+        return new Promise<Response>((resolve) => {
+          answerPost = () => resolve(new Response(JSON.stringify({ data: [{ b64_json: ONE_PIXEL_PNG }] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }));
+        });
+      }
+      return Promise.resolve(new Response(JSON.stringify({ items: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
+    });
+    vi.stubGlobal("fetch", fetchFn);
+    host.insert.mockReset()
+      .mockRejectedValueOnce(new Error("生成期间 Photoshop 当前文档已切换，已拒绝写入"))
+      .mockResolvedValueOnce({ documentId: "doc-paid-once", layerIds: ["layer-a"] });
+    const documentA = { ...host.context };
+    const documentB = { ...host.context, documentId: "doc-other", documentName: "other.psd" };
+
+    let current!: PrototypeController;
+    let tree!: ReturnType<typeof create>;
+    await act(async () => { tree = create(<Harness expose={(controller) => { current = controller; }} />); });
+    await waitFor(() => current.context?.documentId === documentA.documentId, "Photoshop context was not activated");
+    act(() => current.setSettings({ ...current.settings, apiKey: "test-key", connectionStatus: "connected" }));
+    act(() => current.updateDraft({ prompt: "switch away", model: "gpt-image-2-oai", count: 1, outputTarget: "current-document" }));
+    await act(async () => undefined);
+    expect(current.startGeneration()).toBe(true);
+    await waitFor(() => Boolean(answerPost), "paid POST did not start");
+
+    host.openDocumentIds = [documentA.documentId, documentB.documentId];
+    host.context = documentB;
+    await waitFor(() => current.context?.documentId === documentB.documentId, "did not follow the switch to document B");
+    await act(async () => { answerPost(); });
+    await waitFor(() => host.insert.mock.calls.length === 1 && Boolean(current.toast?.text.includes("就会自动放进去")), "write was not deferred");
+    expect(current.toast?.text).toContain("「paid-once.psd」");
+
+    host.context = documentA;
+    await waitFor(() => host.insert.mock.calls.length === 2, "returning did not place the image");
+    await waitFor(() => Boolean(current.toast?.text.includes("已生成并写入 Photoshop")), "write success was not reported");
+    expect(fetchFn.mock.calls.filter(([input]) => String(input).endsWith("/v1/images/generations"))).toHaveLength(1);
+    act(() => tree.unmount());
+  });
+
   it("keeps a posted request locked across hook unmount and rebuild", async () => {
     const fetchFn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       if (!String(input).endsWith("/v1/images/generations")) {

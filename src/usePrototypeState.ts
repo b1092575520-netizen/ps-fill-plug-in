@@ -222,6 +222,8 @@ interface DocumentRuntimeResources {
   jobId: string | null;
   candidateOwner: DocumentTaskToken | null;
   previewAssetId: string | null;
+  /** A finished image waits for the user to return to its document. */
+  writeAwaitingReturn: boolean;
 }
 
 function createDocumentRuntimeResources(): DocumentRuntimeResources {
@@ -242,6 +244,7 @@ function createDocumentRuntimeResources(): DocumentRuntimeResources {
     jobId: null,
     candidateOwner: null,
     previewAssetId: null,
+    writeAwaitingReturn: false,
   };
 }
 
@@ -478,6 +481,7 @@ export function usePrototypeState() {
     const resources = resourcesFor(documentId);
     if (resources.insertInFlight) return;
     resources.insertInFlight = true;
+    resources.writeAwaitingReturn = false;
     updateSession(documentId, (session) => ({
       ...session,
       writeStatus: "writing",
@@ -501,14 +505,22 @@ export function usePrototypeState() {
       );
     } catch (error) {
       const message = errorMessage(error, "Photoshop 写入失败");
+      // Writing into a document the user is not looking at would yank their
+      // view; hold the image and place it as soon as they switch back.
+      const awayFromTarget = (candidate.outputTarget ?? "current-document") === "current-document"
+        && activeDocumentIdRef.current !== (candidate.sourceDocumentId ?? documentId);
+      resources.writeAwaitingReturn = awayFromTarget;
       updateSession(documentId, (session) => ({
         ...session,
         generationResultStatus: "succeeded",
         writeStatus: "failed",
-        writeError: message,
+        writeError: awayFromTarget ? "图片已生成，切回这个文档后会自动放进去" : message,
         workspaceView: "write-recovery",
       }));
-      notify("图片已生成，重试写入", "warning");
+      const documentName = documentSessionsRef.current[documentId]?.context?.documentName;
+      notify(awayFromTarget
+        ? `图片已生成，切回${documentName ? `「${documentName}」` : "原来的文档"}就会自动放进去`
+        : "图片已生成，重试写入", awayFromTarget ? "info" : "warning");
     } finally {
       resources.insertInFlight = false;
       finishDeferredCleanup(documentId, resources);
@@ -1914,6 +1926,14 @@ export function usePrototypeState() {
     if (!activeDocumentId || !activeSession) return;
     stagePreviewForDocument(activeDocumentId);
   }, [activeDocumentId, activeSession, stagePreviewForDocument]);
+
+  useEffect(() => {
+    if (!activeDocumentId) return;
+    const resources = documentResourcesRef.current.get(activeDocumentId);
+    const candidate = documentSessionsRef.current[activeDocumentId]?.candidates[0];
+    if (!resources?.writeAwaitingReturn || resources.insertInFlight || !candidate?.asset) return;
+    void writeSingleCandidate(activeDocumentId, candidate);
+  }, [activeDocumentId, writeSingleCandidate]);
 
   useEffect(() => () => {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
