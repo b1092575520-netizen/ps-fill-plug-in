@@ -362,6 +362,26 @@ describe("OpenAIImageProvider", () => {
     },
   );
 
+  it("releases the account when Xinbao reports the task outcome as uncertain", async () => {
+    const coordinator = new RemoteRequestCoordinator({ load: async () => [], save: async () => undefined });
+    const fetchFn = vi.fn()
+      .mockResolvedValueOnce(json({ id: "task-uncertain" }))
+      .mockResolvedValueOnce(json({ items: [{ id: "task-uncertain", status: "uncertain" }] }));
+    const provider = new OpenAIImageProvider(config, {
+      fetchFn, sleep: async () => undefined, maxPollAttempts: 1, requestCoordinator: coordinator,
+    });
+
+    await expect(provider.generate({
+      prompt: "test", model: "gpt-image-2-oai", n: 1, responseFormat: "url",
+      audit: {
+        localRequestId: "request-uncertain", documentId: "doc", mode: "text" as const,
+        submittedAt: Date.now(), promptHash: "sha256:u",
+      },
+    }, new AbortController().signal)).rejects.toThrow("云端记录核对");
+    expect(coordinator.snapshot()[0]).toMatchObject({ providerTaskId: "task-uncertain", status: "unknown" });
+    expect(coordinator.isBusy()).toBe(false);
+  });
+
   it("uses documented Xinbao batch-get for a no-cost connection check", async () => {
     const fetchFn = vi.fn().mockResolvedValueOnce(json({
       object: "batch.task.list",

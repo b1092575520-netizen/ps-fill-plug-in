@@ -56,15 +56,30 @@ describe("pending task follow-up", () => {
     const outcome = await reconcilePendingTasks({ batchGetTasks }, coordinator, new AbortController().signal);
 
     expect(batchGetTasks).toHaveBeenCalledWith(["task-1"], expect.any(AbortSignal));
-    expect(outcome).toEqual({ completed: 1, failed: 0, pending: 0 });
+    expect(outcome).toEqual({ completed: 1, failed: 0, unknown: 0, pending: 0 });
     expect(coordinator.isBusy()).toBe(false);
+  });
+
+  it("stops holding the account when Xinbao reports the task outcome as uncertain", async () => {
+    const coordinator = new RemoteRequestCoordinator(memoryStorage(), () => NOW);
+    await cancelAfterAccept(coordinator, "job-u", "task-u");
+
+    const outcome = await reconcilePendingTasks(
+      { batchGetTasks: vi.fn(async () => [task("task-u", "uncertain")]) },
+      coordinator,
+      new AbortController().signal,
+    );
+
+    expect(outcome).toEqual({ completed: 0, failed: 0, unknown: 1, pending: 0 });
+    expect(coordinator.isBusy()).toBe(false);
+    expect(coordinator.snapshot()[0]).toMatchObject({ status: "unknown" });
   });
 
   it("asks nothing when no submitted task is waiting", async () => {
     const coordinator = new RemoteRequestCoordinator(memoryStorage(), () => NOW);
     const batchGetTasks = vi.fn(async () => []);
     await expect(reconcilePendingTasks({ batchGetTasks }, coordinator, new AbortController().signal))
-      .resolves.toEqual({ completed: 0, failed: 0, pending: 0 });
+      .resolves.toEqual({ completed: 0, failed: 0, unknown: 0, pending: 0 });
     expect(batchGetTasks).not.toHaveBeenCalled();
   });
 
@@ -90,7 +105,7 @@ describe("pending task follow-up", () => {
       await vi.waitFor(() => expect(onResolved).toHaveBeenCalledOnce());
     });
 
-    expect(onResolved).toHaveBeenCalledWith({ completed: 1, failed: 0, pending: 0 });
+    expect(onResolved).toHaveBeenCalledWith({ completed: 1, failed: 0, unknown: 0, pending: 0 });
     expect(coordinator.isBusy()).toBe(false);
     const calls = batchGetTasks.mock.calls.length;
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
@@ -133,7 +148,7 @@ describe("pending task follow-up", () => {
       />);
     });
     await act(async () => {
-      await vi.waitFor(() => expect(onResolved).toHaveBeenCalledWith({ completed: 0, failed: 1, pending: 0 }));
+      await vi.waitFor(() => expect(onResolved).toHaveBeenCalledWith({ completed: 0, failed: 1, unknown: 0, pending: 0 }));
     });
     expect(batchGetTasks).toHaveBeenCalledTimes(2);
     act(() => tree.unmount());

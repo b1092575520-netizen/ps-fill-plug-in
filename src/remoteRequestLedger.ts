@@ -25,7 +25,10 @@ export type RemoteRequestStatus =
   | "downloading"
   | "completed"
   | "failed"
-  | "uncertain";
+  | "uncertain"
+  // The provider itself gave up on the task (its upstream link broke): the
+  // outcome will never be known, so the account is not held for it.
+  | "unknown";
 
 export interface RemoteRequestAudit {
   localRequestId: string;
@@ -77,7 +80,7 @@ function isMode(value: unknown): value is GenerationMode {
 }
 
 function isStatus(value: unknown): value is RemoteRequestStatus {
-  return ["submitting", "running", "downloading", "completed", "failed", "uncertain"].includes(String(value));
+  return ["submitting", "running", "downloading", "completed", "failed", "uncertain", "unknown"].includes(String(value));
 }
 
 export function normalizeRemoteRequestRecords(value: unknown, now = Date.now()): RemoteRequestRecord[] {
@@ -238,8 +241,8 @@ export class RemoteRequestCoordinator {
       })
       .catch(async (error) => {
         const current = currentRecord();
-        if (current.postCount === 0 || current.status === "failed") {
-          current.status = "failed";
+        if (current.postCount === 0 || current.status === "failed" || current.status === "unknown") {
+          if (current.status !== "unknown") current.status = "failed";
           this.release(audit.localRequestId);
           await this.persist();
           throw error;
@@ -282,7 +285,7 @@ export class RemoteRequestCoordinator {
    * Applies a provider status to the matching record. Returns the terminal
    * outcome when this call resolved a previously unresolved record.
    */
-  async reconcileProviderTask(taskId: string, status: string): Promise<"completed" | "failed" | null> {
+  async reconcileProviderTask(taskId: string, status: string): Promise<"completed" | "failed" | "unknown" | null> {
     await this.ensureLoaded();
     const record = this.records.find((item) => item.providerTaskId === taskId);
     if (!record) return null;
@@ -290,10 +293,11 @@ export class RemoteRequestCoordinator {
     const normalizedStatus = status.trim().toLowerCase();
     if (["succeeded", "completed", "success"].includes(normalizedStatus)) record.status = "completed";
     else if (["failed", "error", "cancelled", "canceled", "not_found"].includes(normalizedStatus)) record.status = "failed";
+    else if (normalizedStatus === "uncertain") record.status = "unknown";
     else return null;
     this.release(record.localRequestId);
     await this.persist();
-    return wasUnresolved ? record.status as "completed" | "failed" : null;
+    return wasUnresolved ? record.status as "completed" | "failed" | "unknown" : null;
   }
 
   /**

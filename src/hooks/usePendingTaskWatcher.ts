@@ -15,6 +15,7 @@ type PendingTaskLedger = Pick<
 export interface PendingTaskOutcome {
   completed: number;
   failed: number;
+  unknown: number;
   pending: number;
 }
 
@@ -30,16 +31,18 @@ export async function reconcilePendingTasks(
   signal: AbortSignal,
 ): Promise<PendingTaskOutcome> {
   const taskIds = await ledger.detachedPendingTaskIds();
-  if (!taskIds.length) return { completed: 0, failed: 0, pending: 0 };
+  if (!taskIds.length) return { completed: 0, failed: 0, unknown: 0, pending: 0 };
   const tasks = await provider.batchGetTasks(taskIds, signal);
   let completed = 0;
   let failed = 0;
+  let unknown = 0;
   for (const task of tasks) {
     const outcome = await ledger.reconcileProviderTask(task.taskId, task.status);
     if (outcome === "completed") completed += 1;
     else if (outcome === "failed") failed += 1;
+    else if (outcome === "unknown") unknown += 1;
   }
-  return { completed, failed, pending: (await ledger.detachedPendingTaskIds()).length };
+  return { completed, failed, unknown, pending: (await ledger.detachedPendingTaskIds()).length };
 }
 
 interface PendingTaskWatcherOptions {
@@ -105,10 +108,10 @@ export function usePendingTaskWatcher({
           ledger,
           controller.signal,
         )
-        : { completed: 0, failed: 0, pending: 0 }))
+        : { completed: 0, failed: 0, unknown: 0, pending: 0 }))
       .then((outcome) => {
         if (controller.signal.aborted) return;
-        if (outcome.completed || outcome.failed) onResolvedRef.current(outcome);
+        if (outcome.completed || outcome.failed || outcome.unknown) onResolvedRef.current(outcome);
         if (outcome.pending) timerRef.current = setTimeout(check, intervalMs);
       })
       .catch(() => {

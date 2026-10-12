@@ -469,9 +469,10 @@ export function usePrototypeState() {
   usePendingTaskWatcher({
     settings,
     enabled: UXP_RUNTIME,
-    onResolved: ({ completed, failed }) => {
+    onResolved: ({ completed, failed, unknown }) => {
       if (completed) notify("之前提交的图已在心宝生成好，点右上角云朵进入云端记录即可取回", "success");
       else if (failed) notify("之前提交的任务在心宝那边失败了，现在可以重新生成", "warning");
+      else if (unknown) notify("之前提交的一单心宝那边连接断了，不确定有没有扣分。请到云端记录核对，没有图再重新生成", "warning");
       refreshCloudTasksRef.current();
     },
   });

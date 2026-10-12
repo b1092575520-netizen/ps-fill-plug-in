@@ -480,7 +480,9 @@ export class OpenAIImageProvider {
         return this.download(data.result?.data ?? data.data ?? [], signal);
       }
       if (status === "uncertain") {
-        throw new Error("任务状态不确定，可能已由上游处理；请勿自动重复提交");
+        // Xinbao lost its upstream connection; this status never changes.
+        await controls?.setStatus("unknown");
+        throw new Error("心宝那边这单的上游连接断了，不确定有没有出图、有没有扣分。请先到云端记录核对，没有图再重新生成");
       }
       if (["failed", "error", "cancelled", "canceled", "not_found"].includes(status)) {
         await controls?.setStatus("failed");
