@@ -24,7 +24,27 @@
       "preferredDockedSize": {
         "width": 320,
         "height": 760
-      }
+      },
+      "icons": [
+        {
+          "width": 48,
+          "height": 48,
+          "path": "icon.png",
+          "scale": [
+            1
+          ],
+          "theme": [
+            "darkest",
+            "dark",
+            "medium",
+            "light",
+            "lightest"
+          ],
+          "species": [
+            "generic"
+          ]
+        }
+      ]
     }
   ],
   "requiredPermissions": {
@@ -32,5 +52,25 @@
       "domains": "all"
     },
     "localFileSystem": "request"
-  }
+  },
+  "icons": [
+    {
+      "width": 48,
+      "height": 48,
+      "path": "icon.png",
+      "scale": [
+        1
+      ],
+      "theme": [
+        "darkest",
+        "dark",
+        "medium",
+        "light",
+        "lightest"
+      ],
+      "species": [
+        "generic"
+      ]
+    }
+  ]
 }

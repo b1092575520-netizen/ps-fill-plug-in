@@ -507,7 +507,9 @@ export function usePrototypeState() {
       const message = errorMessage(error, "Photoshop 写入失败");
       // Writing into a document the user is not looking at would yank their
       // view; hold the image and place it as soon as they switch back.
-      const awayFromTarget = (candidate.outputTarget ?? "current-document") === "current-document"
+      const targetClosed = message.includes("文档已关闭");
+      const awayFromTarget = !targetClosed
+        && (candidate.outputTarget ?? "current-document") === "current-document"
         && activeDocumentIdRef.current !== (candidate.sourceDocumentId ?? documentId);
       resources.writeAwaitingReturn = awayFromTarget;
       updateSession(documentId, (session) => ({
@@ -518,9 +520,11 @@ export function usePrototypeState() {
         workspaceView: "write-recovery",
       }));
       const documentName = documentSessionsRef.current[documentId]?.context?.documentName;
-      notify(awayFromTarget
-        ? `图片已生成，切回${documentName ? `「${documentName}」` : "原来的文档"}就会自动放进去`
-        : "图片已生成，重试写入", awayFromTarget ? "info" : "warning");
+      notify(targetClosed
+        ? "图片已生成，但原文档已关闭。可在云端记录取回，不用重新生成"
+        : awayFromTarget
+          ? `图片已生成，切回${documentName ? `「${documentName}」` : "原来的文档"}就会自动放进去`
+          : "图片已生成，重试写入", awayFromTarget ? "info" : "warning");
     } finally {
       resources.insertInFlight = false;
       finishDeferredCleanup(documentId, resources);

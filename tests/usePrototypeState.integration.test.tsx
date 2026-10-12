@@ -634,6 +634,54 @@ describe("usePrototypeState paid generation and write recovery", () => {
     act(() => tree.unmount());
   });
 
+  it("points to cloud records instead of waiting when the original document was closed", async () => {
+    let answerPost!: () => void;
+    const fetchFn = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/v1/images/generations")) {
+        return new Promise<Response>((resolve) => {
+          answerPost = () => resolve(new Response(JSON.stringify({ data: [{ b64_json: ONE_PIXEL_PNG }] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }));
+        });
+      }
+      return Promise.resolve(new Response(JSON.stringify({ items: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
+    });
+    vi.stubGlobal("fetch", fetchFn);
+    host.insert.mockReset()
+      .mockRejectedValueOnce(new Error("生成任务对应的 Photoshop 文档已关闭"))
+      .mockResolvedValueOnce({ documentId: "doc-paid-once", layerIds: ["layer-a"] });
+    const documentA = { ...host.context };
+    const documentB = { ...host.context, documentId: "doc-other", documentName: "other.psd" };
+
+    let current!: PrototypeController;
+    let tree!: ReturnType<typeof create>;
+    await act(async () => { tree = create(<Harness expose={(controller) => { current = controller; }} />); });
+    await waitFor(() => current.context?.documentId === documentA.documentId, "Photoshop context was not activated");
+    act(() => current.setSettings({ ...current.settings, apiKey: "test-key", connectionStatus: "connected" }));
+    act(() => current.updateDraft({ prompt: "switch away", model: "gpt-image-2-oai", count: 1, outputTarget: "current-document" }));
+    await act(async () => undefined);
+    expect(current.startGeneration()).toBe(true);
+    await waitFor(() => Boolean(answerPost), "paid POST did not start");
+
+    host.openDocumentIds = [documentA.documentId, documentB.documentId];
+    host.context = documentB;
+    await waitFor(() => current.context?.documentId === documentB.documentId, "did not follow the switch to document B");
+    await act(async () => { answerPost(); });
+    await waitFor(() => host.insert.mock.calls.length === 1 && Boolean(current.toast?.text.includes("原文档已关闭")), "closed document was not reported");
+    expect(current.toast?.text).toContain("云端记录");
+
+    host.context = documentA;
+    await waitFor(() => current.context?.documentId === documentA.documentId, "did not follow the switch back");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+    expect(host.insert).toHaveBeenCalledTimes(1);
+    act(() => tree.unmount());
+  });
+
   it("keeps a posted request locked across hook unmount and rebuild", async () => {
     const fetchFn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       if (!String(input).endsWith("/v1/images/generations")) {

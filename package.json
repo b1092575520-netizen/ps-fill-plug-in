@@ -10,7 +10,8 @@
     "build": "npm run typecheck && vite build",
     "build:uxp": "npm run typecheck && vite build --config vite.uxp.config.ts && npm run verify:uxp",
     "verify:uxp": "node scripts/verify-uxp-build.cjs",
-    "preview": "vite preview --host 127.0.0.1"
+    "preview": "vite preview --host 127.0.0.1",
+    "deploy": "npm run build:uxp && node scripts/deploy-installed.cjs"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

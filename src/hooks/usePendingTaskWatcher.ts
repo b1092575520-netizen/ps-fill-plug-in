@@ -98,12 +98,14 @@ export function usePendingTaskWatcher({
     runningRef.current = true;
     const controller = new AbortController();
     abortRef.current = controller;
-    void Promise.resolve()
-      .then(() => reconcilePendingTasks(
-        providerFactoryRef.current({ baseUrl: identity.baseUrl, apiKey }),
-        ledger,
-        controller.signal,
-      ))
+    void ledger.detachedPendingTaskIds()
+      .then((taskIds) => (taskIds.length
+        ? reconcilePendingTasks(
+          providerFactoryRef.current({ baseUrl: identity.baseUrl, apiKey }),
+          ledger,
+          controller.signal,
+        )
+        : { completed: 0, failed: 0, pending: 0 }))
       .then((outcome) => {
         if (controller.signal.aborted) return;
         if (outcome.completed || outcome.failed) onResolvedRef.current(outcome);
