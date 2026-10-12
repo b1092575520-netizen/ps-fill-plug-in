@@ -33,7 +33,9 @@ if (!fs.existsSync(target)) {
   process.exit(1);
 }
 
-const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+const now = new Date();
+const pad = (value) => String(value).padStart(2, "0");
+const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 const backup = path.join(root, "backups", `installed-${stamp}`);
 fs.mkdirSync(backup, { recursive: true });
 for (const entry of fs.readdirSync(target)) {
