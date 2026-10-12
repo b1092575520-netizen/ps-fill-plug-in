@@ -794,7 +794,9 @@ export function GenerateAction({ controller, dragHandle }: { controller: Prototy
   return (
     <div className="generate-wrap">
       <button className="generate-button" type="button" disabled={Boolean(controller.validationMessage)} onClick={controller.startGeneration}>
-        {dragHandle}{controller.validationMessage || `生成 ${controller.draft.count} 张`}
+        {dragHandle}{controller.validationMessage || `生成 ${controller.draft.count} 张${
+          controller.pointEstimate == null ? "" : ` · 约 ${controller.pointEstimate} 积分`
+        }`}
       </button>
     </div>
   );

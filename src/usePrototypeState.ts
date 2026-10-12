@@ -42,6 +42,7 @@ import {
   snapshotModelOptions,
 } from "./backend/providerCapabilities";
 import { createCandidates } from "./mockArtwork";
+import { estimateGenerationPoints } from "./backend/pointPricing";
 import {
   completeDocumentSession,
   cancelDocumentJob,
@@ -85,7 +86,7 @@ const INITIAL_DRAFT: GenerationDraft = {
   model: "auto",
   resolution: "2K",
   quality: "high",
-  count: 4,
+  count: 1,
   aspectRatio: "auto",
   customWidth: 1,
   customHeight: 1,
@@ -961,6 +962,12 @@ export function usePrototypeState() {
   const validationMessage = useMemo(() => {
     return realGenerationBlocker(draft, settings.apiKey, UXP_RUNTIME, context);
   }, [context, draft, settings.apiKey]);
+
+  const pointEstimate = useMemo(() => estimateGenerationPoints(
+    generationModel(draft.model, settings.modelOptions, settings.providerSnapshot),
+    draft.resolution,
+    draft.count,
+  ), [draft.count, draft.model, draft.resolution, settings.modelOptions, settings.providerSnapshot]);
 
   const finishGeneration = useCallback((snapshot: GenerationDraft, ratio: string, token: DocumentTaskToken) => {
     if (!sessionCoordinatorRef.current.accepts(token)) return;
@@ -1957,7 +1964,7 @@ export function usePrototypeState() {
   return {
     runtimeMode: UXP_RUNTIME ? "uxp" as const : "browser" as const,
     draft, updateDraft, setCount, setCustomDimension,
-    context, outputRatio, validationMessage,
+    context, outputRatio, validationMessage, pointEstimate,
     settings, setSettings, settingsOpen, setSettingsOpen,
     cloudRecordsOpen, setCloudRecordsOpen, cloudRecords, cloudRecordsStatus, cloudRecordsError,
     cloudTaskImages, refreshCloudTasks, loadCloudTaskImage, cloudLibrary, clearCloudImages: cloudRecordsController.clearImages,

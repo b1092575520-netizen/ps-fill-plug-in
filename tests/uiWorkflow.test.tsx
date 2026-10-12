@@ -856,6 +856,13 @@ describe("compact workflow UI", () => {
     expect(html).not.toContain("disabled");
   });
 
+  it("shows the estimated points on the generation button when a price is known", () => {
+    const html = renderToStaticMarkup(<GenerateAction controller={controller({ pointEstimate: 36 })} />);
+    expect(html).toContain(">生成 3 张 · 约 36 积分</button>");
+    const unknown = renderToStaticMarkup(<GenerateAction controller={controller({ pointEstimate: null })} />);
+    expect(unknown).toContain(">生成 3 张</button>");
+  });
+
   it("replaces generation with progress and cancellation while a job is active", () => {
     const html = renderToStaticMarkup(<GenerateAction controller={controller({
       status: "running",
