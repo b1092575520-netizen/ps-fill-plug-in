@@ -15,6 +15,11 @@ const XINBAO_IMAGE_PRICES: Record<string, ModelPrice> = {
   "gpt-image-2": { pointsPerImage: 6, resolutions: ["api-default", "1K", "2K"] },
 };
 
+/** Published points per image at any covered resolution, or null. */
+export function pointsPerImage(model: string) {
+  return XINBAO_IMAGE_PRICES[model]?.pointsPerImage ?? null;
+}
+
 /** Estimated points for one generation, or null when no price is published. */
 export function estimateGenerationPoints(model: string, resolution: ImageResolution, count: number) {
   const price = XINBAO_IMAGE_PRICES[model];

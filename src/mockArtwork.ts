@@ -65,7 +65,7 @@ export function createArtworkDataUrl(index: number, prompt: string, ratio: strin
 export function createCandidates(count: number, prompt: string, ratio: AspectRatio | string): Candidate[] {
   return Array.from({ length: count }, (_, index) => ({
     id: `candidate-${Date.now()}-${index}`,
-    title: `方案 ${String(index + 1).padStart(2, "0")}`,
+    title: `第 ${index + 1} 张`,
     url: createArtworkDataUrl(index, prompt, ratio),
     aspectRatio: ratio,
     selected: index === 0,

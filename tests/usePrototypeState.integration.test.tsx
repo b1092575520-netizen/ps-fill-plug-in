@@ -265,13 +265,7 @@ describe("usePrototypeState paid generation and write recovery", () => {
     await waitFor(() => current.context?.documentId === host.context.documentId, "Photoshop context was not activated");
     await waitFor(() => current.promptNotesReady && current.promptHistoryReady && current.generationSettingsReady, "local stores were not loaded");
 
-    act(() => current.savePromptNote({
-      id: "favorite-separate",
-      title: "手工收藏",
-      prompt: "favorite prompt",
-      mode: "all",
-      pinned: false,
-    }));
+    act(() => current.favoritePrompt("favorite prompt"));
     act(() => current.setRememberLastSettings(false));
     act(() => current.setSettings({
       ...current.settings,
@@ -298,7 +292,7 @@ describe("usePrototypeState paid generation and write recovery", () => {
     })]);
     await waitFor(() => current.cloudRecords.length === 1, "cloud history did not refresh");
     expect(current.promptNotes).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "favorite-separate", prompt: "favorite prompt" }),
+      expect.objectContaining({ prompt: "favorite prompt" }),
     ]));
     expect(current.cloudRecords).toEqual([expect.objectContaining({ taskId: "task-cloud-separate" })]);
     expect(JSON.stringify(current.promptHistory)).not.toContain("task-cloud-separate");
@@ -394,14 +388,64 @@ describe("usePrototypeState paid generation and write recovery", () => {
     await waitFor(() => current.workspaceView === "results", "candidates did not arrive");
 
     act(() => current.insertSelected());
-    await waitFor(() => current.workspaceView === "write-recovery", "results insertion did not enter recovery");
-    expect(current.writeStatus).toBe("failed");
+    await waitFor(() => current.toast?.text.includes("modal state") === true, "insertion failure was not reported");
+    // Nothing was kept, so the results and the user's ticks stay put for another try.
+    expect(current.workspaceView).toBe("results");
     expect(current.candidates).toHaveLength(2);
-    expect(current.writeError).toContain("modal state");
+    expect(current.selectedCount).toBe(1);
 
-    act(() => current.retryGeneratedWrite());
-    await waitFor(() => current.workspaceView === "config" && current.candidates.length === 0, "write recovery did not complete");
-    expect(host.insert).toHaveBeenCalledTimes(3);
+    await waitFor(() => current.previewStatus === "idle" || current.previewStatus === "ready", "preview did not settle");
+    act(() => current.insertSelected());
+    await waitFor(() => current.workspaceView === "config" && current.candidates.length === 0, "second keep did not complete");
+    act(() => tree.unmount());
+  });
+
+  it("keeps several results, with the image on screen placed first and visible", async () => {
+    const fetchFn = vi.fn(async (input: RequestInfo | URL) => (
+      String(input).endsWith("/v1/images/generations")
+        ? new Response(JSON.stringify({ data: [
+            { b64_json: ONE_PIXEL_PNG },
+            { b64_json: ONE_PIXEL_PNG },
+            { b64_json: ONE_PIXEL_PNG },
+          ] }), { status: 200, headers: { "content-type": "application/json" } })
+        : new Response(JSON.stringify({ items: [] }), { status: 200, headers: { "content-type": "application/json" } })
+    ));
+    vi.stubGlobal("fetch", fetchFn);
+    let layer = 0;
+    host.insert.mockReset().mockImplementation(async () => ({
+      documentId: host.context.documentId,
+      layerIds: [`layer-${layer += 1}`],
+    }));
+
+    let current!: PrototypeController;
+    let tree!: ReturnType<typeof create>;
+    await act(async () => { tree = create(<Harness expose={(controller) => { current = controller; }} />); });
+    await waitFor(() => current.context?.documentId === host.context.documentId, "Photoshop context was not activated");
+    act(() => current.setSettings({ ...current.settings, apiKey: "test-key", connectionStatus: "connected" }));
+    act(() => current.updateDraft({ prompt: "three candidates", model: "gpt-image-2-oai", count: 3 }));
+    await act(async () => undefined);
+    expect(current.startGeneration()).toBe(true);
+    await waitFor(() => current.workspaceView === "results" && current.previewStatus === "ready", "candidates did not arrive");
+    const [first, second, third] = current.candidates;
+
+    // With only the previewed image ticked, the tick follows the preview.
+    act(() => current.activateCandidate(third.id));
+    expect(current.candidates.map((item) => item.selected)).toEqual([false, false, true]);
+    // Once a second image is ticked, previewing no longer changes the ticks.
+    act(() => current.toggleCandidate(first.id));
+    act(() => current.activateCandidate(second.id));
+    expect(current.candidates.map((item) => item.selected)).toEqual([true, false, true]);
+    act(() => current.activateCandidate(third.id));
+    await waitFor(() => current.previewStatus === "ready", "preview did not settle");
+    expect(current.selectedCount).toBe(2);
+
+    host.insert.mockClear();
+    act(() => current.insertSelected());
+    await waitFor(() => current.workspaceView === "config" && current.candidates.length === 0, "kept images were not placed");
+    const placed = host.insert.mock.calls.at(-1)!;
+    expect(placed[0]).toEqual([third.asset, first.asset]);
+    expect(placed[1]).toBe("current-document");
+    expect(current.toast?.text).toContain("已保留 2 张");
     act(() => tree.unmount());
   });
 

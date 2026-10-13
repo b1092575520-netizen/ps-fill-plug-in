@@ -27,8 +27,11 @@ import {
 } from "./generationSettingsStorage";
 import { fileFromCapturedReference, planReferenceFiles, removeReferenceById } from "./backend/referenceSelection";
 import {
+  addFavoritePrompt,
   loadPromptNotes,
+  markPromptNoteUsed,
   normalizePromptNotes,
+  renamePromptNote,
   savePromptNotes,
 } from "./promptNotebookStorage";
 import {
@@ -160,7 +163,7 @@ function readableGenerationError(error: unknown) {
       // Ignore non-serializable host exceptions.
     }
   }
-  return "API 请求失败";
+  return "生成失败，请稍后重试";
 }
 
 function cloneDraft(draft: GenerationDraft): GenerationDraft {
@@ -558,38 +561,19 @@ export function usePrototypeState() {
     void savePromptNotes(normalized).catch(() => notify("提示词本保存失败", "warning"));
   }, [notify]);
 
-  const savePromptNote = useCallback((input: Omit<PromptNote, "createdAt" | "updatedAt" | "order"> & { order?: number }) => {
-    const now = Date.now();
-    const existing = promptNotesRef.current.find((note) => note.id === input.id);
-    const nextNote: PromptNote = {
-      ...input,
-      order: input.order ?? existing?.order ?? promptNotesRef.current.length,
-      createdAt: existing?.createdAt ?? now,
-      updatedAt: now,
-    };
-    const next = existing
-      ? promptNotesRef.current.map((note) => note.id === input.id ? nextNote : note)
-      : [...promptNotesRef.current, nextNote];
+  const favoritePrompt = useCallback((prompt: string) => {
+    const next = addFavoritePrompt(promptNotesRef.current, prompt);
+    if (next === promptNotesRef.current) return;
     commitPromptNotes(next);
-  }, [commitPromptNotes]);
+    notify("已收藏，下次在提示词下面点一下就能用", "success");
+  }, [commitPromptNotes, notify]);
 
   const deletePromptNote = useCallback((id: string) => {
     commitPromptNotes(promptNotesRef.current.filter((note) => note.id !== id));
   }, [commitPromptNotes]);
 
-  const togglePromptNotePinned = useCallback((id: string) => {
-    commitPromptNotes(promptNotesRef.current.map((note) => note.id === id
-      ? { ...note, pinned: !note.pinned, updatedAt: Date.now() }
-      : note));
-  }, [commitPromptNotes]);
-
-  const reorderPromptNote = useCallback((id: string, toIndex: number) => {
-    const notes = [...promptNotesRef.current];
-    const fromIndex = notes.findIndex((note) => note.id === id);
-    if (fromIndex < 0) return;
-    const [moved] = notes.splice(fromIndex, 1);
-    notes.splice(Math.max(0, Math.min(toIndex, notes.length)), 0, moved);
-    commitPromptNotes(notes.map((note, order) => ({ ...note, order })));
+  const renameNote = useCallback((id: string, title: string) => {
+    commitPromptNotes(renamePromptNote(promptNotesRef.current, id, title));
   }, [commitPromptNotes]);
 
   const commitPromptHistory = useCallback((next: PromptHistoryEntry[]) => {
@@ -598,7 +582,7 @@ export function usePrototypeState() {
     void savePromptHistory(next).catch(() => notify("提示词历史保存失败", "warning"));
   }, [notify]);
 
-  const recordSuccessfulPrompt = useCallback((prompt: string, mode: GenerationDraft["mode"]) => {
+  const recordUsedPrompt = useCallback((prompt: string, mode: GenerationDraft["mode"]) => {
     const next = recordPromptHistory(promptHistoryRef.current, prompt, mode);
     if (next !== promptHistoryRef.current) commitPromptHistory(next);
   }, [commitPromptHistory]);
@@ -705,21 +689,23 @@ export function usePrototypeState() {
       if (apiKey) await credentialStore.saveApiKey(apiKey);
       else await credentialStore.deleteApiKey();
       setCredentialSaveStatus("saved");
-      notify(apiKey ? "API Key 已安全保存" : "已删除保存的 API Key", "success");
+      notify(apiKey ? "Key 已保存" : "已删除保存的 Key", "success");
       refreshAllRef.current();
     } catch {
       setCredentialSaveStatus("error");
-      notify("API Key 安全存储写入失败", "warning");
+      notify("Key 保存失败，请重试", "warning");
     }
   }, [notify]);
 
   const updateDraft = useCallback((patch: Partial<GenerationDraft>) => {
     updateActiveSession((session) => {
       const patched = { ...session.draft, ...patch };
-      const next = patch.mode && patch.mode !== session.draft.mode
+      const modeChanged = Boolean(patch.mode && patch.mode !== session.draft.mode);
+      const next = modeChanged
         ? applyRememberedSettings(patched, generationSettingsMemoryRef.current, patch.mode)
         : patched;
-      if (patch.model === undefined) return { ...session, draft: next };
+      // Remembered settings may predate the current model options.
+      if (patch.model === undefined && !modeChanged) return { ...session, draft: next };
       const capability = capabilityForModel(settings.providerSnapshot, next.model);
       if (!capability) {
         return { ...session, draft: { ...next, resolution: "api-default" } };
@@ -737,6 +723,18 @@ export function usePrototypeState() {
       return { ...session, draft: { ...next, resolution, quality, aspectRatio } };
     });
   }, [settings.providerSnapshot, updateActiveSession]);
+
+  const applyPromptNote = useCallback((id: string) => {
+    const note = promptNotesRef.current.find((item) => item.id === id);
+    if (!note) return;
+    updateDraft({ prompt: note.prompt });
+    commitPromptNotes(markPromptNoteUsed(promptNotesRef.current, id));
+  }, [commitPromptNotes, updateDraft]);
+
+  const applyPromptHistory = useCallback((id: string) => {
+    const entry = promptHistoryRef.current.find((item) => item.id === id);
+    if (entry) updateDraft({ prompt: entry.prompt });
+  }, [updateDraft]);
 
   useEffect(() => {
     if (!generationSettingsReady || !rememberLastSettings || !activeDocumentId) return;
@@ -971,7 +969,7 @@ export function usePrototypeState() {
 
   const outputRatio = useMemo(() => {
     if (draft.mode === "redraw") return ratioFromDocument(context);
-    if (draft.aspectRatio === "auto") return "API 返回比例";
+    if (draft.aspectRatio === "auto") return "自动";
     if (draft.aspectRatio === "custom") return `${draft.customWidth}:${draft.customHeight}`;
     return draft.aspectRatio;
   }, [context, draft]);
@@ -980,11 +978,16 @@ export function usePrototypeState() {
     return realGenerationBlocker(draft, settings.apiKey, UXP_RUNTIME, context);
   }, [context, draft, settings.apiKey]);
 
-  const pointEstimate = useMemo(() => estimateGenerationPoints(
-    generationModel(draft.model, settings.modelOptions, settings.providerSnapshot),
-    draft.resolution,
-    draft.count,
-  ), [draft.count, draft.model, draft.resolution, settings.modelOptions, settings.providerSnapshot]);
+  /** The model a generation would really use ("auto" resolved). */
+  const resolvedModel = useMemo(
+    () => generationModel(draft.model, settings.modelOptions, settings.providerSnapshot),
+    [draft.model, settings.modelOptions, settings.providerSnapshot],
+  );
+
+  const pointEstimate = useMemo(
+    () => estimateGenerationPoints(resolvedModel, draft.resolution, draft.count),
+    [draft.count, draft.resolution, resolvedModel],
+  );
 
   const finishGeneration = useCallback((snapshot: GenerationDraft, ratio: string, token: DocumentTaskToken) => {
     if (!sessionCoordinatorRef.current.accepts(token)) return;
@@ -994,7 +997,7 @@ export function usePrototypeState() {
     const next = createCandidates(snapshot.count, snapshot.prompt, ratio);
     setDocumentSessions((sessions) => completeDocumentSession(sessions, documentId, jobId, next));
     sessionCoordinatorRef.current.finish(token);
-    notify(`已生成 ${snapshot.count} 个候选，比例 ${ratio}`, "success");
+    notify(`已生成 ${snapshot.count} 张，选好要保留的`, "success");
   }, [notify]);
 
   const finishRemoteGeneration = useCallback((
@@ -1026,7 +1029,7 @@ export function usePrototypeState() {
       );
       return {
       id: `remote-${jobId}-${index}`,
-      title: `方案 ${String(index + 1).padStart(2, "0")}`,
+      title: `第 ${index + 1} 张`,
       url,
       aspectRatio: ratio,
       selected: index === 0,
@@ -1041,10 +1044,10 @@ export function usePrototypeState() {
     setDocumentSessions((sessions) => completeDocumentSession(sessions, documentId, jobId, next, directWrite));
     sessionCoordinatorRef.current.finish(token);
     if (directWrite) {
-      notify("图片已生成，正在写入 Photoshop", "success");
+      notify("图片已生成，正在放进 PS", "success");
       void writeSingleCandidate(documentId, next[0]);
     } else {
-      notify(`API 已完成 ${next.length} 个候选`, "success");
+      notify(`已生成 ${next.length} 张，选好要保留的`, "success");
     }
   }, [assetOwner, notify, resourcesFor, writeSingleCandidate]);
 
@@ -1110,7 +1113,7 @@ export function usePrototypeState() {
         updateSession(documentId, (current) => ({ ...current, previewStatus: "idle" }));
       }
       if (activeDocumentIdRef.current === documentId) {
-        notify(error instanceof Error ? error.message : "候选预览写入失败", "warning");
+        notify(error instanceof Error ? error.message : "预览放不进 PS，请再试一次", "warning");
       }
     }).finally(() => {
       resources.previewStaging = false;
@@ -1136,7 +1139,7 @@ export function usePrototypeState() {
       return false;
     }
     if (resources.previewStaging || resources.previewCleanup) {
-      notify("正在清理候选预览，请稍后再生成", "warning");
+      notify("正在清理上一批预览，请稍后再生成", "warning");
       return false;
     }
     if (resources.insertInFlight) {
@@ -1156,6 +1159,8 @@ export function usePrototypeState() {
     const snapshot = cloneDraft(draft);
     const contextSnapshot = cloneContext(context);
     const ratio = outputRatio;
+    // Kept even if this run fails, so a prompt is never lost to a bad network.
+    recordUsedPrompt(snapshot.prompt, snapshot.mode);
     const token = sessionCoordinatorRef.current.begin(
       documentId,
       () => `job-${Date.now()}-${localRequestSequence += 1}`,
@@ -1332,9 +1337,6 @@ export function usePrototypeState() {
               promptHash: hashPrompt(requestSnapshot.prompt),
             },
           });
-          if (assets.length > 0 && requestSnapshot.prompt.trim()) {
-            recordSuccessfulPrompt(requestSnapshot.prompt, requestSnapshot.mode);
-          }
           if (!sessionCoordinatorRef.current.accepts(token)) return;
           updateStage("downloading");
           finishRemoteGeneration(requestSnapshot, liveContext, liveRatio, token, assets);
@@ -1383,7 +1385,7 @@ export function usePrototypeState() {
       return true;
     }
     if (UXP_RUNTIME) {
-      notify("请先配置 API Key", "warning");
+      notify("请先在设置里填 Key", "warning");
       updateSession(documentId, (session) => ({
         ...session,
         status: "idle",
@@ -1435,7 +1437,7 @@ export function usePrototypeState() {
       }
     }, 180);
     return true;
-  }, [activateDocumentContext, context, draft, finishGeneration, finishRemoteGeneration, notify, outputRatio, recordSuccessfulPrompt, resourcesFor, settings, updateSession, validationMessage]);
+  }, [activateDocumentContext, context, draft, finishGeneration, finishRemoteGeneration, notify, outputRatio, recordUsedPrompt, resourcesFor, settings, updateSession, validationMessage]);
 
   const cancelGeneration = useCallback(() => {
     const documentId = activeDocumentIdRef.current;
@@ -1470,11 +1472,19 @@ export function usePrototypeState() {
     if (!documentId) return;
     const candidate = candidates.find((item) => item.id === id);
     if (!candidate) return;
-    updateSession(documentId, (session) => ({
-      ...session,
-      activeCandidateId: id,
-      candidates: session.candidates.map((item) => ({ ...item, selected: item.id === id })),
-    }));
+    updateSession(documentId, (session) => {
+      const kept = session.candidates.filter((item) => item.selected);
+      // Until the user ticks a second image, the tick follows the preview, so
+      // "look at a few, keep the one on screen" needs no extra clicks.
+      const followPreview = kept.length === 1 && kept[0].id === session.activeCandidateId;
+      return {
+        ...session,
+        activeCandidateId: id,
+        candidates: followPreview
+          ? session.candidates.map((item) => ({ ...item, selected: item.id === id }))
+          : session.candidates,
+      };
+    });
     if (!UXP_RUNTIME || !candidate.asset || candidate.outputTarget === "new-document") return;
     updateSession(documentId, (session) => ({ ...session, previewStatus: "switching" }));
     const resources = resourcesFor(documentId);
@@ -1521,18 +1531,20 @@ export function usePrototypeState() {
         const current = documentSessionsRef.current[documentId];
         if (current?.previewRevision === previewRevision && resources.previewRevision === previewRevision) {
           updateSession(documentId, (session) => ({ ...session, previewStatus: "ready" }));
-          notify(error instanceof Error ? error.message : "候选预览切换失败", "warning");
+          notify(error instanceof Error ? error.message : "预览切换失败", "warning");
         }
       });
   }, [assetOwner, candidates, notify, resourcesFor, updateSession]);
 
-  const toggleCandidate = activateCandidate;
-  const selectAllCandidates = useCallback(() => {
-    const first = candidates[0];
-    if (first) activateCandidate(first.id);
-  }, [activateCandidate, candidates]);
+  /** Ticks or unticks an image to keep; previewing is a separate click. */
+  const toggleCandidate = useCallback((id: string) => {
+    updateActiveSession((session) => ({
+      ...session,
+      candidates: session.candidates.map((item) => item.id === id ? { ...item, selected: !item.selected } : item),
+    }));
+  }, [updateActiveSession]);
 
-  const selectedCount = activeCandidateId ? 1 : 0;
+  const selectedCount = candidates.filter((candidate) => candidate.selected).length;
 
   const insertSelected = useCallback(() => {
     const documentId = activeDocumentIdRef.current;
@@ -1541,13 +1553,19 @@ export function usePrototypeState() {
       return;
     }
     if (!selectedCount) {
-      notify("请先选择候选图", "warning");
+      notify("先勾选要保留的图", "warning");
       return;
     }
-    const selected = candidates.filter((candidate) => candidate.id === activeCandidateId);
+    // The image on screen goes first so it stays the visible layer.
+    const selected = candidates
+      .filter((candidate) => candidate.selected)
+      .sort((a, b) => Number(b.id === activeCandidateId) - Number(a.id === activeCandidateId));
     const resources = resourcesFor(documentId);
     if (resources.insertInFlight) return;
-    if (photoshopPreviewSession && selected[0]?.photoshopLayerId) {
+    const keepPreviewLayer = selected.length === 1
+      && selected[0].id === activeCandidateId
+      && Boolean(selected[0].photoshopLayerId);
+    if (photoshopPreviewSession && keepPreviewLayer) {
       resources.insertInFlight = true;
       const previewRevision = resources.previewRevision + 1;
       resources.previewRevision = previewRevision;
@@ -1560,7 +1578,7 @@ export function usePrototypeState() {
       void previewCoordinatorRef.current!.commit(documentId).then(async () => {
         if (resources.previewRevision !== previewRevision) return;
         await releaseDocumentResults(documentId);
-        notify("已确认当前候选并释放临时资源", "success");
+        notify("已保留这张", "success");
       }).catch((error) => {
         if (resources.previewRevision === previewRevision) {
           updateSession(documentId, (session) => ({
@@ -1571,7 +1589,7 @@ export function usePrototypeState() {
             writeError: errorMessage(error, "Photoshop 写入失败"),
             workspaceView: "write-recovery",
           }));
-          notify(errorMessage(error, "确认候选失败"), "warning");
+          notify(errorMessage(error, "保留失败，请再试一次"), "warning");
         }
       }).finally(() => {
         resources.insertInFlight = false;
@@ -1584,7 +1602,7 @@ export function usePrototypeState() {
     const resultTarget = selected[0]?.outputTarget ?? draft.outputTarget;
     const sourceDocumentId = selected[0]?.sourceDocumentId;
     if (!UXP_RUNTIME || assets.length !== selected.length) {
-      notify(`浏览器演示：已模拟${resultTarget === "new-document" ? "新建文档" : "插入图层"}（${selectedCount} 张）`, "info");
+      notify(`浏览器演示：已模拟${resultTarget === "new-document" ? "新建文档" : "插入图层"}（${selected.length} 张）`, "info");
       return;
     }
     resources.insertInFlight = true;
@@ -1598,31 +1616,39 @@ export function usePrototypeState() {
     const insertionOwner = resources.candidateOwner
       ? assetOwner(resources.candidateOwner)
       : assetOwner({ documentId, jobId: "insert", revision: previewRevision });
-    void photoshopGateway.insert(
-      assets,
-      resultTarget,
-      sourceDocumentId ?? documentId,
-      insertionOwner,
-    )
+    void (async () => {
+      // The preview layer only ever holds one image; place every kept image
+      // fresh instead, the one on screen first and visible.
+      if (photoshopPreviewSession) {
+        if (resources.previewAssetId) {
+          await assetLifecycleRef.current.cleanupResource(documentId, "preview-layer", resources.previewAssetId);
+          resources.previewAssetId = null;
+        } else {
+          await previewCoordinatorRef.current!.discard(documentId);
+        }
+      }
+      return photoshopGateway.insert(assets, resultTarget, sourceDocumentId ?? documentId, insertionOwner);
+    })()
       .then(async () => {
         if (resources.previewRevision !== previewRevision) return;
         await releaseDocumentResults(documentId);
         notify(
           resultTarget === "new-document"
-            ? `已新建文档并插入 ${selectedCount} 个候选`
-            : `已插入 ${selectedCount} 个命名图层`,
+            ? `已放进新文档，共 ${selected.length} 张`
+            : selected.length > 1
+              ? `已保留 ${selected.length} 张：正在看的这张显示，其余的在图层里先隐藏`
+              : "已保留这张",
           "success",
         );
       })
       .catch((error) => {
         if (resources.previewRevision === previewRevision) {
+          // Nothing was kept; stay on the results so the user can try again.
           updateSession(documentId, (session) => ({
             ...session,
-            previewStatus: "ready",
-            generationResultStatus: "succeeded",
-            writeStatus: "failed",
-            writeError: errorMessage(error, "Photoshop 写入失败"),
-            workspaceView: "write-recovery",
+            photoshopPreviewSession: null,
+            previewStatus: "idle",
+            candidates: session.candidates.map((item) => ({ ...item, photoshopLayerId: undefined })),
           }));
           notify(errorMessage(error, "Photoshop 写入失败"), "warning");
         }
@@ -1631,7 +1657,7 @@ export function usePrototypeState() {
         resources.insertInFlight = false;
         finishDeferredCleanup(documentId, resources);
       });
-  }, [activeCandidateId, assetOwner, candidates, draft.outputTarget, finishDeferredCleanup, notify, photoshopPreviewSession, releaseDocumentResults, resourcesFor, selectedCount, updateSession]);
+  }, [activeCandidateId, assetOwner, candidates, draft.outputTarget, finishDeferredCleanup, notify, photoshopGateway, photoshopPreviewSession, releaseDocumentResults, resourcesFor, selectedCount, updateSession]);
 
   const commitSnapshot = useCallback((
     snapshot: NonNullable<ConnectionSettings["providerSnapshot"]>,
@@ -1737,7 +1763,7 @@ export function usePrototypeState() {
     const current = settingsRef.current;
     const apiKey = current.apiKey.trim();
     if (!apiKey) {
-      if (showToast) notify("请先填写 API Key", "warning");
+      if (showToast) notify("请先在设置里填 Key", "warning");
       return;
     }
     providerRefreshAbortRef.current?.abort();
@@ -1784,7 +1810,7 @@ export function usePrototypeState() {
         return next;
       });
       setCredentialSaveStatus("saved");
-    }).catch(() => notify("无法读取 UXP 安全存储中的 API Key", "warning"));
+    }).catch(() => notify("读不到保存的 Key，请在设置里重新填一次", "warning"));
     return () => { disposed = true; };
   }, [notify]);
 
@@ -1810,7 +1836,7 @@ export function usePrototypeState() {
     const current = settingsRef.current;
     const apiKey = current.apiKey.trim();
     if (!apiKey) {
-      notify("请先填写 API Key", "warning");
+      notify("请先在设置里填 Key", "warning");
       return;
     }
     providerRefreshAbortRef.current?.abort();
@@ -1833,7 +1859,7 @@ export function usePrototypeState() {
         && settingsRef.current.apiKey.trim() === apiKey
       ) setBalance(result.balance);
       notify(
-        result.snapshot.credentialVerified ? "API 连接及凭据验证正常" : "API 服务可达",
+        result.snapshot.credentialVerified ? "已连上心宝，Key 正常" : "已连上心宝",
         result.snapshot.credentialVerified ? "success" : "info",
       );
     }).catch((error) => {
@@ -1967,11 +1993,12 @@ export function usePrototypeState() {
           previewStatus: "idle",
           workspaceView: "config",
         }));
+        if (UXP_RUNTIME) notify("这批图没有保留。3 天内可在云端记录找回", "info");
       })
       .catch((error) => {
         if (resources.previewRevision === previewRevision) {
           updateSession(documentId, (session) => ({ ...session, previewStatus: "ready" }));
-          notify(error instanceof Error ? error.message : "清理候选预览失败", "warning");
+          notify(error instanceof Error ? error.message : "清理预览失败", "warning");
         }
       })
       .finally(() => {
@@ -1989,14 +2016,13 @@ export function usePrototypeState() {
   return {
     runtimeMode: UXP_RUNTIME ? "uxp" as const : "browser" as const,
     draft, updateDraft, setCount, setCustomDimension,
-    context, outputRatio, validationMessage, pointEstimate,
+    context, outputRatio, validationMessage, pointEstimate, resolvedModel,
     settings, setSettings, settingsOpen, setSettingsOpen,
     cloudRecordsOpen, setCloudRecordsOpen, cloudRecords, cloudRecordsStatus, cloudRecordsError,
     cloudTaskImages, refreshCloudTasks, loadCloudTaskImage, cloudLibrary, clearCloudImages: cloudRecordsController.clearImages,
     rememberLastSettings, generationSettingsReady, setRememberLastSettings, restoreDefaultGenerationSettings,
-    promptNotes, promptNotesReady, savePromptNote, deletePromptNote,
-    togglePromptNotePinned, reorderPromptNote,
-    promptHistory, promptHistoryReady, deletePromptHistory, clearPromptHistory,
+    promptNotes, promptNotesReady, favoritePrompt, deletePromptNote, renameNote, applyPromptNote,
+    promptHistory, promptHistoryReady, deletePromptHistory, clearPromptHistory, applyPromptHistory,
     saveApiKey, credentialSaveStatus, balance, currentModelCapability,
     theme, setTheme, workspaceView, returnToConfiguration,
     generationResultStatus, writeStatus, writeError, retryGeneratedWrite, discardGeneratedResult,
@@ -2006,7 +2032,7 @@ export function usePrototypeState() {
     addReferences, addSelectionReference, referenceCaptureStatus,
     pickReferenceFiles, reorderReference, removeReference, clearReferences,
     startGeneration, cancelGeneration, toggleCandidate,
-    selectAllCandidates, insertSelected, testConnection,
+    insertSelected, testConnection,
     refreshModels: () => refreshModels(true),
     refreshBalance: () => refreshBalance(true),
   };

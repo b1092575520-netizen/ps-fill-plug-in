@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
-import { capabilitySourceLabel } from "../backend/providerCapabilities";
+import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type ReactNode } from "react";
+import { modelDisplayName } from "../backend/providerCapabilities";
+import { pointsPerImage } from "../backend/pointPricing";
 import type { PrototypeController } from "../usePrototypeState";
 import { MODE_META, QUALITY_META, type GenerationMode, type ImageQuality, type PromptNote, type ThemeKey } from "../types";
 import { UxpDropdown } from "./UxpDropdown";
@@ -12,15 +13,19 @@ const UXP_ICONS = {
   check: "✓",
   close: "×",
   cloud: "☁",
+  edit: "✎",
   key: "◇",
   layers: "▤",
   lock: "▣",
   plus: "+",
   refresh: "↻",
   settings: "⚙",
+  star: "★",
+  "star-outline": "☆",
   status: "●",
   stop: "■",
   theme: "◐",
+  undo: "↶",
   zoom: "⌕",
 } as const;
 
@@ -37,6 +42,15 @@ function UxpIcon({ name, className = "" }: {
       {UXP_ICONS[name]}
     </span>
   );
+}
+
+function connectionLabel(controller: PrototypeController) {
+  if (!controller.settings.apiKey.trim()) return "未填 Key";
+  const state = controller.settings.connectionStatus;
+  if (state === "connected" || state === "reachable") return "已连接";
+  if (state === "testing") return "检测中";
+  if (state === "failed") return "连接失败";
+  return "未连接";
 }
 
 export function PanelHeader({ controller }: { controller: PrototypeController }) {
@@ -60,44 +74,40 @@ export function PanelHeader({ controller }: { controller: PrototypeController })
       : balance.status === "available"
       ? balance.unlimited ? "不限积分" : `${compactPoints(balance.remaining)} 积分`
       : balance.status === "unsupported" || balance.status === "error"
-        ? "余额不可用"
+        ? "余额查不到"
         : "— 积分";
   const updatedAt = balance.updatedAt
     ? new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(balance.updatedAt)
     : "—";
   return (
-    <>
-      <header className="panel-header">
-        <span className={`api-indicator api-indicator--${apiState}`} title="OpenAI 兼容 API 状态，以设置中的连接测试结果为准">
-          <i />{apiState === "connected" ? "API 凭据正常" : apiState === "reachable" ? "API 服务可达" : apiState === "testing" ? "API 连接测试中" : apiState === "failed" ? "API 连接失败" : "API 未连接"}
-        </span>
-        <span className="balance-summary-wrap">
-          <span
-            className={`balance-summary ${low ? "is-low" : ""} ${empty ? "is-empty" : ""}`}
-            role="button"
-            tabIndex={0}
-            title={balance.error ? `${balance.error}；点击重试` : `点击刷新积分余额；上次更新：${updatedAt}`}
-            onClick={controller.refreshBalance}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                controller.refreshBalance();
-              }
-            }}
-          >
-            <UxpIcon name="balance" />{labelText}
-          </span>
-        </span>
-        <span className="panel-header__actions">
-          <button className="icon-button" type="button" aria-label="打开云端生图记录" onClick={() => controller.setCloudRecordsOpen(true)}>
-            <UxpIcon name="cloud" />
-          </button>
-          <button className="icon-button" type="button" aria-label="打开设置" onClick={() => controller.setSettingsOpen(true)}>
-            <UxpIcon name="settings" className="settings-glyph" />
-          </button>
-        </span>
-      </header>
-    </>
+    <header className="panel-header">
+      <span className={`api-indicator api-indicator--${apiState}`} title="和心宝的连接状态，可在设置里重新检测">
+        <i />{connectionLabel(controller)}
+      </span>
+      <span
+        className={`balance-summary ${low ? "is-low" : ""} ${empty ? "is-empty" : ""}`}
+        role="button"
+        tabIndex={0}
+        title={balance.error ? `${balance.error}；点一下重试` : `点一下刷新余额；上次更新 ${updatedAt}`}
+        onClick={controller.refreshBalance}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            controller.refreshBalance();
+          }
+        }}
+      >
+        <UxpIcon name="balance" />{labelText}
+      </span>
+      <span className="panel-header__actions">
+        <button className="icon-button" type="button" title="云端记录" aria-label="打开云端生图记录" onClick={() => controller.setCloudRecordsOpen(true)}>
+          <UxpIcon name="cloud" />
+        </button>
+        <button className="icon-button" type="button" title="设置" aria-label="打开设置" onClick={() => controller.setSettingsOpen(true)}>
+          <UxpIcon name="settings" className="settings-glyph" />
+        </button>
+      </span>
+    </header>
   );
 }
 
@@ -119,7 +129,7 @@ export function CloudRecordsPage({ controller }: { controller: PrototypeControll
   const library = controller.cloudLibrary;
   const group = (value: string) => ["succeeded", "completed", "success"].includes(value.toLowerCase()) ? "success"
     : ["failed", "error", "cancelled", "canceled"].includes(value.toLowerCase()) ? "failed" : "pending";
-  const statusLabel = (value: string) => ({ succeeded: "已完成", completed: "已完成", success: "已完成", failed: "失败", error: "失败", cancelled: "已取消", canceled: "已取消", running: "生成中", processing: "处理中", queued: "排队中", pending: "等待中" }[value.toLowerCase()] ?? "状态待确认");
+  const statusLabel = (value: string) => ({ succeeded: "已完成", completed: "已完成", success: "已完成", failed: "失败", error: "失败", cancelled: "已取消", canceled: "已取消", running: "生成中", processing: "生成中", queued: "排队中", pending: "排队中", uncertain: "结果不确定" }[value.toLowerCase()] ?? "状态待确认");
   const requestedTaskIdsRef = useRef(new Set<string>());
   // Keep the page useful even when an older UXP host has not populated the
   // newly-added controller fields yet. A blank page hides the real failure.
@@ -127,12 +137,13 @@ export function CloudRecordsPage({ controller }: { controller: PrototypeControll
   const records = Array.isArray(controller.cloudRecords) ? controller.cloudRecords : [];
   const images = controller.cloudTaskImages ?? {};
   const filtered = records.filter((task) => (filter === "all" || group(task.status) === filter)
-    && `${task.model} ${task.taskId} ${task.prompt ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()))
+    && `${task.model} ${modelDisplayName(task.model)} ${task.taskId} ${task.prompt ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()))
     .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
   const pages = Math.max(1, Math.ceil(filtered.length / 12));
   const actualPage = Math.min(page, pages - 1);
   const visibleRecords = filtered.slice(actualPage * 12, (actualPage + 1) * 12);
   const visibleTaskIds = visibleRecords.map((task) => task.taskId).join("|");
+  const missingKey = !controller.settings.apiKey.trim();
   useEffect(() => {
     requestedTaskIdsRef.current.clear();
     controller.clearCloudImages?.();
@@ -152,13 +163,13 @@ export function CloudRecordsPage({ controller }: { controller: PrototypeControll
   const knownStatus = status === "idle" || status === "loading" || status === "ready" || status === "error";
   return (
     <section className="cloud-records-page" data-cloud-records-status={status}>
-      <header className="cloud-records__header">
-        <span><strong>{library?.task ? "云端原图" : "云端生图记录"}</strong><small>{library?.task ? "已生成结果" : `最近 3 天 · ${records.length} 个任务`}</small></span>
+      <header className="page-header">
+        <span><strong>{library?.task ? "云端原图" : "云端记录"}</strong><small>{library?.task ? "已生成的结果" : `最近 3 天 · ${records.length} 个任务`}</small></span>
         <div>
-          <button type="button" title="刷新云端记录" aria-label="刷新云端生图记录" onClick={controller.refreshCloudTasks} disabled={status === "loading" || library?.busy}>
+          <button type="button" title="刷新" aria-label="刷新云端生图记录" onClick={controller.refreshCloudTasks} disabled={status === "loading" || library?.busy}>
             <UxpIcon name="refresh" className={status === "loading" ? "spin" : ""} />
           </button>
-          <button type="button" title={library?.task ? "返回云端列表" : "返回生成界面"} aria-label={library?.task ? "返回云端列表" : "返回生成界面"} disabled={library?.writing} onClick={() => { if (library?.task) library.close(); else controller.setCloudRecordsOpen(false); }}>
+          <button type="button" title={library?.task ? "返回列表" : "返回"} aria-label={library?.task ? "返回云端列表" : "返回生成界面"} disabled={library?.writing} onClick={() => { if (library?.task) library.close(); else controller.setCloudRecordsOpen(false); }}>
             <UxpIcon name="close" />
           </button>
         </div>
@@ -166,25 +177,30 @@ export function CloudRecordsPage({ controller }: { controller: PrototypeControll
       {library?.task ? <>
         <div className={`cloud-detail__preview${expanded ? " is-expanded" : ""}`}>
           {library.url ? <button type="button" title={expanded ? "缩小预览" : "放大预览"} onClick={() => setExpanded(!expanded)}><CloudImage key={library.url} src={library.url} alt={`生成结果 ${library.index + 1}`} /></button>
-            : <span>{library.phase === "downloading" ? "正在取回原图…" : "原图尚未取回"}</span>}
+            : <span>{library.phase === "downloading" ? "正在取回原图…" : "原图还没取回"}</span>}
         </div>
         {(library.task.resultUrls?.length ?? 1) > 1 && <div className="cloud-detail__pager">
-          <button type="button" aria-label="上一张结果" title="上一张结果" disabled={library.busy || library.index === 0} onClick={() => library.select(library.task!, library.index - 1)}>‹</button>
+          <button type="button" aria-label="上一张结果" title="上一张" disabled={library.busy || library.index === 0} onClick={() => library.select(library.task!, library.index - 1)}>‹</button>
           <span>{library.index + 1} / {library.task.resultUrls?.length || 1}</span>
-          <button type="button" aria-label="下一张结果" title="下一张结果" disabled={library.busy || library.index + 1 >= (library.task.resultUrls?.length || 1)} onClick={() => library.select(library.task!, library.index + 1)}>›</button>
+          <button type="button" aria-label="下一张结果" title="下一张" disabled={library.busy || library.index + 1 >= (library.task.resultUrls?.length || 1)} onClick={() => library.select(library.task!, library.index + 1)}>›</button>
         </div>}
-        <div className="cloud-detail__info"><strong>{library.task.model}</strong><small>{cloudTaskTime(library.task.createdAt)}</small><code>{library.task.taskId}</code>{library.task.prompt && <p>{library.task.prompt}</p>}</div>
+        <div className="cloud-detail__info">
+          <strong>{modelDisplayName(library.task.model)}</strong>
+          <small>{cloudTaskTime(library.task.createdAt)}</small>
+          {library.task.prompt && <p>{library.task.prompt}</p>}
+          <code title="任务编号，找心宝站长核对时用">{library.task.taskId}</code>
+        </div>
         {library.message && <div className={`cloud-detail__message is-${library.phase}`} role={library.phase === "error" ? "alert" : "status"}>{library.message}</div>}
         {library.phase === "downloading" && <button className="cloud-detail__secondary" type="button" onClick={library.close}>取消取回</button>}
-        {!library.hasAsset && library.phase === "error" && <button className="cloud-detail__secondary" type="button" onClick={() => library.select(library.task!, library.index)}>重试取回原图</button>}
+        {!library.hasAsset && library.phase === "error" && <button className="cloud-detail__secondary" type="button" onClick={() => library.select(library.task!, library.index)}>重新取回原图</button>}
         <div className="cloud-detail__actions">
-          <button type="button" className="cloud-detail__primary" disabled={!library.hasAsset || library.busy} onClick={() => library.transfer("current-document")}><UxpIcon name="layers" />插入当前文档</button>
+          <button type="button" className="cloud-detail__primary" disabled={!library.hasAsset || library.busy} onClick={() => library.transfer("current-document")}><UxpIcon name="layers" />放进当前文档</button>
           <button type="button" disabled={!library.hasAsset || library.busy} onClick={() => library.transfer("new-document")}><UxpIcon name="plus" />打开为新文档</button>
-          <button type="button" disabled={!library.hasAsset || library.busy} onClick={() => library.transfer("save")}><UxpIcon name="arrow-down" />保存原图</button>
+          <button type="button" disabled={!library.hasAsset || library.busy} onClick={() => library.transfer("save")}><UxpIcon name="arrow-down" />保存到电脑</button>
         </div>
       </> : <>
-      <input className="cloud-records__search" type="text" aria-label="搜索云端记录" placeholder="搜索模型、任务或提示词" value={query} onChange={(event) => { setQuery(event.target.value); setPage(0); }} />
-      <div className="cloud-records__filters" role="tablist" aria-label="任务状态">
+      <input className="cloud-records__search" type="text" aria-label="搜索云端记录" placeholder="搜索提示词或模型" value={query} onChange={(event) => { setQuery(event.target.value); setPage(0); }} />
+      <div className="tab-strip" role="tablist" aria-label="任务状态">
         {[["all", "全部"], ["success", "已完成"], ["pending", "进行中"], ["failed", "失败"]].map(([value, label]) => <button key={value} role="tab" aria-selected={filter === value} type="button" onClick={() => { setFilter(value); setPage(0); }}>{label}</button>)}
       </div>
       {status === "idle" && <div className="cloud-records__state" aria-live="polite">正在准备云端记录…</div>}
@@ -192,11 +208,13 @@ export function CloudRecordsPage({ controller }: { controller: PrototypeControll
       {status === "error" && (
         <div className="cloud-records__state is-error">
           <span>{controller.cloudRecordsError || "云端记录读取失败"}</span>
-          <button type="button" onClick={controller.refreshCloudTasks}>重试</button>
+          {missingKey
+            ? <button type="button" onClick={() => { controller.setCloudRecordsOpen(false); controller.setSettingsOpen(true); }}>去设置</button>
+            : <button type="button" onClick={controller.refreshCloudTasks}>重试</button>}
         </div>
       )}
       {status === "ready" && records.length === 0 && (
-        <div className="cloud-records__state">最近 3 天没有云端生图记录</div>
+        <div className="cloud-records__state">最近 3 天没有生成记录</div>
       )}
       {!knownStatus && <div className="cloud-records__state" aria-live="polite">正在读取云端记录…</div>}
       {status === "ready" && records.length > 0 && !filtered.length && <div className="cloud-records__state">没有符合条件的记录</div>}
@@ -204,7 +222,7 @@ export function CloudRecordsPage({ controller }: { controller: PrototypeControll
         {visibleRecords.map((task) => {
           const image = images[task.taskId];
           return (
-            <article className="cloud-task" key={task.taskId}>
+            <article className="cloud-task" key={task.taskId} title={`任务编号 ${task.taskId}`}>
               <div className="cloud-task__preview">
                 {image?.status === "ready" && image.url
                   ? <button type="button" title="查看原图" aria-label={`查看任务 ${task.taskId} 原图`} onClick={() => library?.select(task)}><CloudImage key={image.url} src={image.url} alt="云端任务缩略图" /></button>
@@ -213,10 +231,9 @@ export function CloudRecordsPage({ controller }: { controller: PrototypeControll
                     : <span>{group(task.status) === "success" ? "加载中…" : statusLabel(task.status)}</span>}
               </div>
               <div className="cloud-task__meta">
-                <div><strong title={task.model}>{task.model || "未知模型"}</strong><span className={`cloud-task__status is-${task.status}`}>{statusLabel(task.status)}</span></div>
-                <small>创建 {cloudTaskTime(task.createdAt)}</small>
-                <code title={task.taskId}>{task.taskId}</code>
-                <small>{task.origin === "plugin" ? "本插件" : "云端任务"}{task.resultUrls?.length ? ` · ${task.resultUrls.length} 张` : ""}</small>
+                <div><strong>{modelDisplayName(task.model) || "未知模型"}</strong><span className={`cloud-task__status is-${task.status}`}>{statusLabel(task.status)}</span></div>
+                <small>{cloudTaskTime(task.createdAt)}{task.resultUrls?.length ? ` · ${task.resultUrls.length} 张` : ""}</small>
+                {task.prompt ? <p className="cloud-task__prompt">{task.prompt}</p> : <small>{task.origin === "plugin" ? "本插件生成" : "其他地方生成"}</small>}
                 {group(task.status) === "success" && <button className="cloud-task__retrieve" type="button" onClick={() => library?.select(task)}>取回原图 <UxpIcon name="arrow-down" /></button>}
               </div>
             </article>
@@ -229,17 +246,13 @@ export function CloudRecordsPage({ controller }: { controller: PrototypeControll
   );
 }
 
-export function PrototypeNotice({ controller }: { controller: PrototypeController }) {
-  return <div className="prototype-notice">{controller.runtimeMode === "uxp" ? "OpenAI 兼容 API · Key 存入 UXP 安全存储 · Photoshop 真实写入" : "浏览器演示模式 · Key 仅驻留内存 · 不写入 Photoshop"}</div>;
-}
-
-export function ModeTabs({ controller, cards = false }: { controller: PrototypeController; cards?: boolean }) {
+export function ModeTabs({ controller }: { controller: PrototypeController }) {
   const selectMode = (mode: GenerationMode) => controller.updateDraft({
     mode,
     ...(mode === "text" ? {} : { outputTarget: "current-document" as const }),
   });
   return (
-    <div className={`mode-tabs ${cards ? "mode-tabs--cards" : ""}`} role="tablist" aria-label="生成方式">
+    <div className="mode-tabs" role="tablist" aria-label="生成方式">
       {(Object.keys(MODE_META) as GenerationMode[]).map((mode) => (
         <button
           key={mode}
@@ -247,6 +260,7 @@ export function ModeTabs({ controller, cards = false }: { controller: PrototypeC
           className={`mode-tab ${controller.draft.mode === mode ? "is-active" : ""}`}
           role="tab"
           aria-selected={controller.draft.mode === mode}
+          title={MODE_META[mode].description}
           onClick={() => selectMode(mode)}
           onKeyDown={(event) => {
             if (event.key !== "Enter" && event.key !== " ") return;
@@ -255,282 +269,228 @@ export function ModeTabs({ controller, cards = false }: { controller: PrototypeC
           }}
         >
           <strong>{MODE_META[mode].label}</strong>
-          {cards && <small>{MODE_META[mode].description}</small>}
         </button>
       ))}
     </div>
   );
 }
 
-export function PromptField({ controller, prominent = false, dragHandle, onOpenNotebook }: { controller: PrototypeController; prominent?: boolean; dragHandle?: ReactNode; onOpenNotebook: () => void }) {
-  const required = true;
-  return (
-    <div className={`prompt-field ${prominent ? "prompt-field--prominent" : ""}`}>
-      <span>
-        <span>{dragHandle}提示词 <small title={required ? "生成前必须填写提示词" : "可留空，按上下文填充"}>{required ? "必填" : "可选"}</small></span>
-        <span className="prompt-field__actions">
-          <button
-            className="compact-clear-button prompt-clear-button prompt-header-button"
-            type="button"
-            aria-label="清空提示词"
-            disabled={!controller.draft.prompt}
-            onClick={() => controller.updateDraft({ prompt: "" })}
-          >清空</button>
-          <button className="prompt-notebook-trigger prompt-header-button" type="button" aria-expanded={false} onClick={onOpenNotebook}>提示词本</button>
-        </span>
-      </span>
-      <textarea
-        value={controller.draft.prompt}
-        onChange={(event) => controller.updateDraft({ prompt: event.target.value })}
-        placeholder={controller.draft.mode === "redraw" ? "描述希望如何重绘当前画面…" : required ? "描述希望生成的画面…" : "可选：描述选区中需要出现的内容…"}
-      />
-    </div>
-  );
-}
+const SHORTCUT_LIMIT = 6;
+const RECENT_LIMIT = 20;
 
-export function PromptNotebookPage({ controller, onClose }: { controller: PrototypeController; onClose: () => void }) {
-  const [notebookView, setNotebookView] = useState<"favorites" | "history">("favorites");
-  const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<PromptNote["mode"]>("all");
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editorTitle, setEditorTitle] = useState("");
-  const [editorPrompt, setEditorPrompt] = useState("");
-  const [editorMode, setEditorMode] = useState<PromptNote["mode"]>("all");
-  const [editorBaseline, setEditorBaseline] = useState({ title: "", prompt: "", mode: "all" as PromptNote["mode"] });
-  const [editorError, setEditorError] = useState("");
-  const [discardArmed, setDiscardArmed] = useState(false);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [clearHistoryArmed, setClearHistoryArmed] = useState(false);
+/**
+ * Prompt box with its saved prompts right underneath: favorites are one click
+ * away as chips, everything else (all favorites, recent prompts) opens inline.
+ */
+export function PromptField({ controller }: { controller: PrototypeController }) {
+  const prompt = controller.draft.prompt;
+  const current = prompt.trim();
   const notes = controller.promptNotes ?? [];
   const history = controller.promptHistory ?? [];
-  const notesReady = controller.promptNotesReady !== false;
-  const filteredNotes = useMemo(() => {
-    const normalizedQuery = query.trim().toLocaleLowerCase();
-    return notes.filter((note) => {
-      const matchesMode = filter === "all" || note.mode === "all" || note.mode === filter;
-      const matchesQuery = !normalizedQuery
-        || note.title.toLocaleLowerCase().includes(normalizedQuery)
-        || note.prompt.toLocaleLowerCase().includes(normalizedQuery);
-      return matchesMode && matchesQuery;
-    });
-  }, [filter, notes, query]);
-  const filteredHistory = useMemo(() => {
-    const normalizedQuery = query.trim().toLocaleLowerCase();
-    return history.filter((entry) => (
-      (filter === "all" || entry.mode === filter)
-      && (!normalizedQuery || entry.prompt.toLocaleLowerCase().includes(normalizedQuery))
-    ));
-  }, [filter, history, query]);
-  const editorDirty = editorTitle !== editorBaseline.title
-    || editorPrompt !== editorBaseline.prompt
-    || editorMode !== editorBaseline.mode;
-
-  const resetEditor = () => {
-    setEditingId(null);
-    setEditorTitle("");
-    setEditorPrompt("");
-    setEditorMode("all");
-    setEditorBaseline({ title: "", prompt: "", mode: "all" });
-    setEditorError("");
-    setDiscardArmed(false);
+  const favorite = current ? notes.find((note) => note.prompt === current) : undefined;
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  // Filling or clearing the box can throw away typed text; one click brings it back.
+  const [undoPrompt, setUndoPrompt] = useState<string | null>(null);
+  const replace = (apply: () => void) => {
+    setUndoPrompt(prompt.trim() ? prompt : null);
+    apply();
   };
-  const requestClose = () => {
-    if (editingId && editorDirty) {
-      setDiscardArmed(true);
-      return;
-    }
-    resetEditor();
-    onClose();
-  };
-  const beginNew = (prefillCurrent = false) => {
-    setEditingId("new");
-    setEditorTitle("");
-    setEditorPrompt(prefillCurrent ? controller.draft.prompt.trim() : "");
-    setEditorMode(controller.draft.mode);
-    setEditorBaseline({ title: "", prompt: prefillCurrent ? controller.draft.prompt.trim() : "", mode: controller.draft.mode });
-    setEditorError("");
-    setDiscardArmed(false);
-  };
-  const beginEdit = (note: PromptNote) => {
-    setEditingId(note.id);
-    setEditorTitle(note.title);
-    setEditorPrompt(note.prompt);
-    setEditorMode(note.mode);
-    setEditorBaseline({ title: note.title, prompt: note.prompt, mode: note.mode });
-    setEditorError("");
-    setDiscardArmed(false);
-  };
-  const saveEditor = () => {
-    const title = editorTitle.trim();
-    const prompt = editorPrompt.trim();
-    if (!title || !prompt) {
-      setEditorError("标题和提示词不能为空");
-      return;
-    }
-    const existing = editingId && editingId !== "new" ? notes.find((note) => note.id === editingId) : undefined;
-    controller.savePromptNote({
-      id: editingId && editingId !== "new" ? editingId : `note-${Date.now()}`,
-      title,
-      prompt,
-      mode: editorMode,
-      pinned: existing?.pinned ?? false,
-      order: existing?.order,
-    });
-    resetEditor();
-  };
-  const useNote = (note: PromptNote) => {
-    controller.updateDraft({ prompt: note.prompt });
-    resetEditor();
-    onClose();
-  };
-  useEffect(() => {
-    if (typeof window === "undefined") return undefined;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") requestClose();
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [discardArmed, editorDirty, editingId]);
-
+  const recent = history.filter((entry) => !notes.some((note) => note.prompt === entry.prompt));
+  const hasLibrary = notes.length > 0 || recent.length > 0;
   return (
-    <div className="prompt-notebook-page" role="dialog" aria-label="提示词本">
-          <div className="prompt-notebook__header">
-            <span><strong>提示词本</strong><small>{notebookView === "favorites" ? `${notes.length} 条收藏` : `${history.length} 条历史`}</small></span>
-            <div>
-              {notebookView === "favorites" && <button type="button" aria-label="新建提示词" title="新建提示词" onClick={() => beginNew()}><UxpIcon name="plus" /></button>}
-              <button type="button" aria-label="返回主配置" title="返回" onClick={requestClose}>返回</button>
-            </div>
-          </div>
-          <div className="prompt-notebook-tabs" role="tablist" aria-label="提示词本分类">
-            <button type="button" role="tab" aria-selected={notebookView === "favorites"} onClick={() => setNotebookView("favorites")}>收藏</button>
-            <button type="button" role="tab" aria-selected={notebookView === "history"} onClick={() => { resetEditor(); setNotebookView("history"); }}>历史</button>
-          </div>
-          {notebookView === "history" ? (
-            <>
-              <div className="prompt-notebook-toolbar">
-                <input aria-label="搜索提示词历史" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索历史提示词" />
-                <select aria-label="历史模式筛选" value={filter} onChange={(event) => setFilter(event.target.value as PromptNote["mode"])}>
-                  <option value="all">全部</option>
-                  {(Object.keys(MODE_META) as GenerationMode[]).map((mode) => <option key={mode} value={mode}>{MODE_META[mode].label}</option>)}
-                </select>
-              </div>
-              <div className="prompt-notebook__list prompt-history-list">
-                {controller.promptHistoryReady === false ? <small className="prompt-notebook-empty">正在读取提示词历史…</small> : filteredHistory.length === 0 ? <small className="prompt-notebook-empty">暂无生成成功的提示词历史</small> : filteredHistory.map((entry) => (
-                  <article className="prompt-note-card" key={entry.id}>
-                    <div className="prompt-note-card__main"><strong>{MODE_META[entry.mode].label}</strong><small>{entry.prompt}</small></div>
-                    <span className="prompt-note-card__actions">
-                      <button type="button" aria-label={`使用历史${entry.prompt}`} onClick={() => { controller.updateDraft({ prompt: entry.prompt }); onClose(); }}>使用</button>
-                      <button type="button" aria-label={`删除历史${entry.prompt}`} onClick={() => controller.deletePromptHistory(entry.id)}><UxpIcon name="close" /></button>
-                    </span>
-                  </article>
-                ))}
-              </div>
-              {history.length > 0 && (clearHistoryArmed
-                ? <div className="prompt-history-clear-confirm"><span>清空全部提示词历史？</span><button type="button" className="is-danger" onClick={() => { controller.clearPromptHistory(); setClearHistoryArmed(false); }}>确认清空</button><button type="button" onClick={() => setClearHistoryArmed(false)}>取消</button></div>
-                : <button type="button" className="prompt-history-clear" onClick={() => setClearHistoryArmed(true)}>清空历史</button>)}
-            </>
-          ) : editingId ? (
-            <div className="prompt-notebook-editor">
-              <input aria-label="提示词标题" value={editorTitle} onChange={(event) => setEditorTitle(event.target.value)} placeholder="给这条提示词命名" />
-              <textarea aria-label="提示词正文" value={editorPrompt} onChange={(event) => setEditorPrompt(event.target.value)} placeholder="输入可复用的提示词…" />
-              <div className="prompt-notebook-editor__row">
-                <label><span>适用模式</span><select value={editorMode} onChange={(event) => setEditorMode(event.target.value as PromptNote["mode"])}>
-                  <option value="all">全部模式</option>
-                  {(Object.keys(MODE_META) as GenerationMode[]).map((mode) => <option key={mode} value={mode}>{MODE_META[mode].label}</option>)}
-                </select></label>
-                <button type="button" className="notebook-save" onClick={saveEditor}>保存</button>
-              </div>
-              {editorError && <small className="prompt-notebook-error">{editorError}</small>}
-              {discardArmed && <div className="prompt-notebook-discard"><span>放弃未保存修改？</span><button type="button" onClick={() => { resetEditor(); onClose(); }}>放弃并返回</button><button type="button" onClick={() => setDiscardArmed(false)}>继续编辑</button></div>}
-            </div>
-          ) : (
-            <>
-              <div className="prompt-notebook-toolbar">
-                <input aria-label="搜索提示词" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索标题或正文" />
-                <select aria-label="提示词模式筛选" value={filter} onChange={(event) => setFilter(event.target.value as PromptNote["mode"])}>
-                  <option value="all">全部</option>
-                  {(Object.keys(MODE_META) as GenerationMode[]).map((mode) => <option key={mode} value={mode}>{MODE_META[mode].label}</option>)}
-                </select>
-              </div>
-              <div className="prompt-notebook__list">
-                {!notesReady ? <small className="prompt-notebook-empty">正在读取提示词本…</small> : filteredNotes.length === 0 ? <small className="prompt-notebook-empty">没有匹配的提示词</small> : filteredNotes.map((note) => (
-                  <article
-                    className="prompt-note-card"
-                    key={note.id}
-                    draggable
-                    onDragStart={() => setDraggingId(note.id)}
-                    onDragOver={(event) => event.preventDefault()}
-                    onDrop={() => {
-                      if (draggingId && draggingId !== note.id) controller.reorderPromptNote(draggingId, notes.findIndex((item) => item.id === note.id));
-                      setDraggingId(null);
-                    }}
-                  >
-                    <div className="prompt-note-card__main"><strong>{note.title}</strong><small>{note.prompt}</small></div>
-                    <span className="prompt-note-card__actions">
-                      <button type="button" aria-label={`使用${note.title}`} title="快速填入" onClick={() => useNote(note)}>使用</button>
-                      <button type="button" aria-label={`${note.pinned ? "取消置顶" : "置顶"}${note.title}`} title={note.pinned ? "取消置顶" : "置顶"} onClick={() => controller.togglePromptNotePinned(note.id)}>{note.pinned ? "★" : "☆"}</button>
-                      <button type="button" aria-label={`编辑${note.title}`} title="编辑" onClick={() => beginEdit(note)}>编辑</button>
-                      {confirmDeleteId === note.id ? <><button type="button" className="is-danger" onClick={() => { controller.deletePromptNote(note.id); setConfirmDeleteId(null); }}>确认</button><button type="button" onClick={() => setConfirmDeleteId(null)}>取消</button></> : <button type="button" aria-label={`删除${note.title}`} title="删除" onClick={() => setConfirmDeleteId(note.id)}><UxpIcon name="close" /></button>}
-                    </span>
-                  </article>
-                ))}
-              </div>
-              <button type="button" className="prompt-notebook-favorite" onClick={() => {
-                const prompt = controller.draft.prompt.trim();
-                if (!prompt) { beginNew(); setEditorError("当前没有可收藏的提示词"); return; }
-                beginNew(true);
-              }}><UxpIcon name="plus" />收藏当前提示词</button>
-            </>
-          )}
+    <div className="prompt-field">
+      <div className="prompt-field__header">
+        <strong>提示词</strong>
+        {undoPrompt !== null && (
+          <button className="text-button text-button--accent" type="button" onClick={() => { controller.updateDraft({ prompt: undoPrompt }); setUndoPrompt(null); }}>
+            <UxpIcon name="undo" />撤销
+          </button>
+        )}
+        <span className="prompt-field__actions">
+          <button
+            className={`text-button ${favorite ? "is-on" : ""}`}
+            type="button"
+            aria-pressed={Boolean(favorite)}
+            title={favorite ? "取消收藏这条提示词" : "收藏这条提示词，下次一点就能用"}
+            disabled={!current}
+            onClick={() => favorite ? controller.deletePromptNote(favorite.id) : controller.favoritePrompt(current)}
+          >
+            <UxpIcon name={favorite ? "star" : "star-outline"} />{favorite ? "已收藏" : "收藏"}
+          </button>
+          <button className="text-button" type="button" aria-label="清空提示词" disabled={!prompt} onClick={() => replace(() => controller.updateDraft({ prompt: "" }))}>清空</button>
+        </span>
+      </div>
+      <textarea
+        value={prompt}
+        aria-label="提示词"
+        onChange={(event) => { setUndoPrompt(null); controller.updateDraft({ prompt: event.target.value }); }}
+        placeholder={controller.draft.mode === "redraw" ? "想把当前画面改成什么样…" : "描述想要的画面…"}
+      />
+      <div className="prompt-shortcuts">
+        {notes.slice(0, SHORTCUT_LIMIT).map((note) => (
+          <button
+            key={note.id}
+            className={`prompt-chip ${note.prompt === current ? "is-current" : ""}`}
+            type="button"
+            title={note.prompt}
+            onClick={() => replace(() => controller.applyPromptNote(note.id))}
+          >{note.title}</button>
+        ))}
+        {!notes.length && <span className="prompt-shortcuts__hint">写好后点「☆ 收藏」，以后在这里一点就能用</span>}
+        {hasLibrary && (
+          <button className="prompt-chip prompt-chip--more" type="button" aria-expanded={libraryOpen} onClick={() => setLibraryOpen(!libraryOpen)}>
+            {libraryOpen ? "收起" : notes.length ? "更多…" : "最近用过…"}
+          </button>
+        )}
+      </div>
+      {libraryOpen && hasLibrary && (
+        <PromptLibrary
+          controller={controller}
+          notes={notes}
+          recent={recent}
+          currentPrompt={current}
+          onApply={(apply) => { replace(apply); setLibraryOpen(false); }}
+        />
+      )}
     </div>
   );
 }
 
-export function OutputControls({ controller, compact = false }: { controller: PrototypeController; compact?: boolean }) {
+function PromptLibrary({ controller, notes, recent, currentPrompt, onApply }: {
+  controller: PrototypeController;
+  notes: PromptNote[];
+  recent: PrototypeController["promptHistory"];
+  currentPrompt: string;
+  onApply: (apply: () => void) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const keyword = query.trim().toLocaleLowerCase();
+  const matches = (text: string) => !keyword || text.toLocaleLowerCase().includes(keyword);
+  const shownNotes = notes.filter((note) => matches(`${note.title} ${note.prompt}`));
+  const shownRecent = recent.filter((entry) => matches(entry.prompt)).slice(0, RECENT_LIMIT);
+  const finishRename = (save: boolean) => {
+    if (save && renamingId) controller.renameNote(renamingId, renameValue);
+    setRenamingId(null);
+  };
+  const askOrRun = (id: string, run: () => void) => {
+    if (confirmId === id) {
+      setConfirmId(null);
+      run();
+    } else {
+      setConfirmId(id);
+    }
+  };
+  return (
+    <div className="prompt-library">
+      {notes.length + recent.length > 8 && (
+        <input className="prompt-library__search" type="text" aria-label="搜索提示词" placeholder="搜索" value={query} onChange={(event) => setQuery(event.target.value)} />
+      )}
+      {notes.length > 0 && <h4>收藏 · {notes.length}</h4>}
+      {shownNotes.map((note) => (
+        <div className={`prompt-row ${note.prompt === currentPrompt ? "is-current" : ""}`} key={note.id}>
+          {renamingId === note.id ? (
+            <input
+              className="prompt-row__rename"
+              aria-label="收藏名称"
+              autoFocus
+              value={renameValue}
+              onChange={(event) => setRenameValue(event.target.value)}
+              onBlur={() => finishRename(true)}
+              onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+                if (event.key === "Enter") finishRename(true);
+                if (event.key === "Escape") finishRename(false);
+              }}
+            />
+          ) : (
+            <button className="prompt-row__main" type="button" title="填入提示词" onClick={() => onApply(() => controller.applyPromptNote(note.id))}>
+              <strong>{note.title}</strong>
+              <small>{note.prompt}</small>
+            </button>
+          )}
+          <button className="prompt-row__action" type="button" title="改名" aria-label={`给「${note.title}」改名`} onClick={() => { setRenamingId(note.id); setRenameValue(note.title); setConfirmId(null); }}>
+            <UxpIcon name="edit" />
+          </button>
+          <button
+            className={`prompt-row__action ${confirmId === note.id ? "is-confirm" : ""}`}
+            type="button"
+            title="删除收藏"
+            aria-label={confirmId === note.id ? `确认删除「${note.title}」` : `删除「${note.title}」`}
+            onClick={() => askOrRun(note.id, () => controller.deletePromptNote(note.id))}
+          >{confirmId === note.id ? "删除?" : <UxpIcon name="close" />}</button>
+        </div>
+      ))}
+      {recent.length > 0 && <h4>最近用过</h4>}
+      {shownRecent.map((entry) => (
+        <div className={`prompt-row ${entry.prompt === currentPrompt ? "is-current" : ""}`} key={entry.id}>
+          <button className="prompt-row__main" type="button" title="填入提示词" onClick={() => onApply(() => controller.applyPromptHistory(entry.id))}>
+            <small className="prompt-row__text">{entry.prompt}</small>
+          </button>
+          <button className="prompt-row__action" type="button" title="收藏" aria-label="收藏这条" onClick={() => controller.favoritePrompt(entry.prompt)}>
+            <UxpIcon name="star-outline" />
+          </button>
+          <button className="prompt-row__action" type="button" title="从最近记录里删掉" aria-label="删除这条记录" onClick={() => controller.deletePromptHistory(entry.id)}>
+            <UxpIcon name="close" />
+          </button>
+        </div>
+      ))}
+      {keyword && !shownNotes.length && !shownRecent.length && <p className="prompt-library__empty">没有找到</p>}
+      {recent.length > 0 && (
+        <button
+          className={`text-button prompt-library__clear ${confirmId === "history" ? "is-confirm" : ""}`}
+          type="button"
+          onClick={() => askOrRun("history", controller.clearPromptHistory)}
+        >{confirmId === "history" ? "确认清空最近记录" : "清空最近记录"}</button>
+      )}
+    </div>
+  );
+}
+
+function FieldRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="field-row">
+      <span className="field-row__label">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+export function OutputControls({ controller }: { controller: PrototypeController }) {
   const { draft } = controller;
   if (draft.mode !== "text") {
     return (
-      <div className="locked-ratio">
-        <span>输出比例</span>
-        <strong>{controller.outputRatio}</strong>
-        <small>自动跟随当前文档，作为命名图层写回</small>
-      </div>
+      <>
+        <FieldRow label="比例">
+          <span className="field-row__value">跟随文档 {controller.outputRatio}</span>
+        </FieldRow>
+        <p className="field-hint">会把当前文档的画面一起发给心宝，结果放在新图层</p>
+      </>
     );
   }
   const supportedRatios = controller.currentModelCapability?.aspectRatios ?? [];
   return (
-    <div className={`output-controls ${compact ? "is-compact" : ""}`}>
-      <div className="field-row">
-        <span className="field-row__label">插入位置</span>
-        <UxpDropdown id="output-target" ariaLabel="插入位置" value={draft.outputTarget} options={[
-          { value: "new-document", label: "新建文档" },
-          { value: "current-document", label: "当前文档新图层" },
-        ]} onChange={(value) => controller.updateDraft({ outputTarget: value as "new-document" | "current-document" })} />
-      </div>
-      <div className="field-row">
-        <span className="field-row__label">输出比例</span>
+    <>
+      <FieldRow label="比例">
         <UxpDropdown
           id="aspect-ratio"
           ariaLabel="输出比例"
-          value={draft.aspectRatio}
+          value={draft.aspectRatio === "custom" ? "auto" : draft.aspectRatio}
           options={[
-            { value: "auto", label: "自动 · 跟随 API" },
+            { value: "auto", label: "自动" },
             ...supportedRatios.map((ratio) => ({ value: ratio, label: ratio })),
-            { value: "custom", label: "自定义比例" },
           ]}
           onChange={(value) => controller.updateDraft({ aspectRatio: value as typeof draft.aspectRatio })}
         />
-      </div>
-      {draft.aspectRatio === "custom" && (
-        <div className="dimension-row" aria-label="自定义比例">
-          <label><span>宽比</span><input aria-label="自定义比例宽" type="number" min="1" max="100" value={draft.customWidth} onChange={(event) => controller.setCustomDimension("customWidth", Number(event.target.value))} /></label>
-          <span aria-hidden="true">:</span>
-          <label><span>高比</span><input aria-label="自定义比例高" type="number" min="1" max="100" value={draft.customHeight} onChange={(event) => controller.setCustomDimension("customHeight", Number(event.target.value))} /></label>
-        </div>
-      )}
-      <small className="ratio-note">{draft.aspectRatio === "auto" ? "比例以 API 模型返回的结果为准" : draft.aspectRatio === "custom" ? `自定义比例 ${controller.outputRatio}，生成结果保持该比例` : `生成结果保持 ${controller.outputRatio} 比例`}</small>
-    </div>
+      </FieldRow>
+      <FieldRow label="放到">
+        <UxpDropdown id="output-target" ariaLabel="放到哪里" value={draft.outputTarget} options={[
+          { value: "current-document", label: "当前文档（新图层）" },
+          { value: "new-document", label: "新建文档" },
+        ]} onChange={(value) => controller.updateDraft({ outputTarget: value as "new-document" | "current-document" })} />
+      </FieldRow>
+    </>
   );
 }
 
@@ -541,7 +501,7 @@ function CountStepper({ controller }: { controller: PrototypeController }) {
     controller.setCount(Math.min(4, Math.max(1, Number(rawValue))));
   };
   return (
-    <span className="count-stepper" role="group" aria-label="生成数量">
+    <span className="count-stepper" role="group" aria-label="生成数量" title="一次生成几张">
       <button type="button" aria-label="减少生成数量" disabled={count <= 1} onClick={() => { if (count > 1) controller.setCount(count - 1); }}>−</button>
       {controller.runtimeMode === "uxp" ? (
         <span className="count-stepper__value count-stepper__value--static" aria-live="polite">{count}</span>
@@ -564,48 +524,72 @@ function CountStepper({ controller }: { controller: PrototypeController }) {
   );
 }
 
-export function DetailParameters({ controller, title = "详细参数", showHeading = true }: { controller: PrototypeController; title?: string; showHeading?: boolean }) {
+function resolutionLabel(value: string) {
+  return value === "api-default" ? "默认" : value;
+}
+
+function qualityLabel(value: ImageQuality) {
+  return `${QUALITY_META[value].label}（${QUALITY_META[value].hint}）`;
+}
+
+/** Model, size and quality rarely change, so they fold into one line. */
+export function ModelSettings({ controller }: { controller: PrototypeController }) {
+  const [open, setOpen] = useState(false);
   const { draft } = controller;
   const capability = controller.currentModelCapability;
+  const model = controller.resolvedModel ?? draft.model;
   const resolutions = capability?.resolutions ?? ["api-default"];
   const qualities = capability?.qualityOptions ?? [];
+  const quality = qualities.includes(draft.quality) ? draft.quality : qualities[0];
+  const modelOptions = controller.settings.modelOptions.filter((option) => option !== "auto");
+  const summary = model
+    ? [modelDisplayName(model), resolutionLabel(draft.resolution), quality ? QUALITY_META[quality].label : ""].filter(Boolean).join(" · ")
+    : "先在设置里填 Key";
+  const hint = model === "gpt-image-2"
+    ? "G-2.0 实测最大约 1.5K，要更清晰请选 G-2.0 OAI"
+    : model === "gpt-image-2-oai"
+      ? "1K 到 4K、两档画质都是同一个价"
+      : "";
   return (
-    <section className="detail-parameters">
-      {showHeading && <div className="section-title"><strong>{title}</strong><small>参数跟随当前模型能力</small></div>}
-      <div className="parameter-grid">
-        <label className="parameter-cell">
-          <span>模型</span>
-          <UxpDropdown id="model" ariaLabel="模型" value={draft.model} options={[
-            ...(!draft.model ? [{ value: "", label: "请选择模型" }] : []),
-            ...controller.settings.modelOptions.map((model) => ({ value: model, label: model === "auto" ? "自动选择" : model })),
-          ]} onChange={(value) => controller.updateDraft({ model: value })} />
-        </label>
-        <label className="parameter-cell">
-          <span>分辨率</span>
-          <UxpDropdown id="resolution" ariaLabel="分辨率" value={draft.resolution} options={resolutions.map((resolution) => ({
-            value: resolution,
-            label: resolution === "api-default" ? "API 默认" : resolution,
-          }))} onChange={(value) => controller.updateDraft({ resolution: value as typeof draft.resolution })} />
-        </label>
-        {qualities.length > 0 && (
-          <label className="parameter-cell">
-            <span>生成质量</span>
-            <UxpDropdown id="quality" ariaLabel="生成质量" value={draft.quality} options={qualities.map((quality) => ({
-              value: quality,
-              label: `${QUALITY_META[quality].label} · ${QUALITY_META[quality].hint}`,
-            }))} onChange={(value) => controller.updateDraft({ quality: value as ImageQuality })} />
-          </label>
-        )}
-        <label className="parameter-cell parameter-cell--count">
-          <span>生成数量</span>
-          <CountStepper controller={controller} />
-        </label>
-      </div>
-    </section>
+    <div className={`model-settings ${open ? "is-open" : ""}`}>
+      <FieldRow label="参数">
+        <button className="summary-button" type="button" aria-expanded={open} onClick={() => setOpen(!open)}>
+          <span>{summary}</span><b>{open ? "收起" : "修改"}</b>
+        </button>
+      </FieldRow>
+      {open && (
+        <div className="model-settings__body">
+          <FieldRow label="模型">
+            <UxpDropdown id="model" ariaLabel="模型" value={model} options={[
+              ...(!model ? [{ value: "", label: "请选择模型" }] : []),
+              ...modelOptions.map((option) => {
+                const points = pointsPerImage(option);
+                return { value: option, label: points == null ? modelDisplayName(option) : `${modelDisplayName(option)} · ${points} 积分/张` };
+              }),
+            ]} onChange={(value) => controller.updateDraft({ model: value })} />
+          </FieldRow>
+          <FieldRow label="清晰度">
+            <UxpDropdown id="resolution" ariaLabel="清晰度" value={draft.resolution} options={resolutions.map((resolution) => ({
+              value: resolution,
+              label: resolutionLabel(resolution),
+            }))} onChange={(value) => controller.updateDraft({ resolution: value as typeof draft.resolution })} />
+          </FieldRow>
+          {quality && (
+            <FieldRow label="画质">
+              <UxpDropdown id="quality" ariaLabel="画质" value={quality} options={qualities.map((option) => ({
+                value: option,
+                label: qualityLabel(option),
+              }))} onChange={(value) => controller.updateDraft({ quality: value as ImageQuality })} />
+            </FieldRow>
+          )}
+          {hint && <p className="field-hint">{hint}</p>}
+        </div>
+      )}
+    </div>
   );
 }
 
-export function ReferenceImages({ controller, collapsed = false, showHeading = true }: { controller: PrototypeController; collapsed?: boolean; showHeading?: boolean }) {
+export function ReferenceImages({ controller }: { controller: PrototypeController }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragState, setDragState] = useState<{
     id: string;
@@ -617,6 +601,9 @@ export function ReferenceImages({ controller, collapsed = false, showHeading = t
     currentY: number;
     slotCenters: Array<{ x: number; y: number }>;
   } | null>(null);
+  const references = controller.draft.references;
+  const capturing = controller.referenceCaptureStatus === "capturing";
+  const full = references.length >= 9;
   const handleFiles = (event: ChangeEvent<HTMLInputElement>) => {
     if (event.target.files) controller.addReferences(event.target.files);
     event.target.value = "";
@@ -648,153 +635,138 @@ export function ReferenceImages({ controller, collapsed = false, showHeading = t
     return `translate(${to.x - from.x}px, ${to.y - from.y}px)`;
   };
   return (
-    <section
-      className={`references ${collapsed ? "references--compact" : ""}`}
-      onMouseUp={finishReferenceDrag}
-      onMouseLeave={finishReferenceDrag}
-    >
+    <section className="references" onMouseUp={finishReferenceDrag} onMouseLeave={finishReferenceDrag}>
       <input ref={inputRef} hidden type="file" multiple accept="image/*" onChange={handleFiles} />
-      {controller.draft.references.length ? (
-        <>
-          <div className="references-actions">
-            <span>参考图 {controller.draft.references.length}/9</span>
-            <div className="references-actions__buttons">
+      <div className="references-actions">
+        <span className="references-actions__label">参考图{references.length ? ` ${references.length}/9` : " · 可选"}</span>
+        {references.length > 0 && (
+          <button className="text-button" type="button" aria-label="清空参考图" onClick={controller.clearReferences}>清空</button>
+        )}
+      </div>
+      <div className="reference-add-row">
+        <button
+          className="reference-add"
+          type="button"
+          aria-label="添加参考图"
+          title={full ? "参考图最多 9 张" : "从电脑里选图片"}
+          disabled={full}
+          onClick={pickLocal}
+        ><UxpIcon name="plus" />本地图片</button>
+        <button
+          className="reference-add"
+          type="button"
+          aria-label="添加当前选区"
+          title="把 PS 里当前选区截成一张参考图（不会只改选区）"
+          disabled={full || capturing}
+          onClick={controller.addSelectionReference}
+        ><UxpIcon name="plus" />{capturing ? "正在截取…" : "选区截图"}</button>
+      </div>
+      {references.length > 0 && (
+        <div
+          className="reference-list"
+          onMouseMove={(event) => {
+            const clientX = Number(event.clientX);
+            const clientY = Number(event.clientY);
+            if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
+            setDragState((current) => {
+              if (!current || !current.slotCenters.length) return current;
+              const to = current.slotCenters.reduce((closest, center, candidate) => (
+                ((center.x - clientX) ** 2 + (center.y - clientY) ** 2)
+                  < ((current.slotCenters[closest].x - clientX) ** 2 + (current.slotCenters[closest].y - clientY) ** 2)
+                  ? candidate
+                  : closest
+              ), 0);
+              if (to === current.to && clientX === current.currentX && clientY === current.currentY) return current;
+              return { ...current, to, currentX: clientX, currentY: clientY };
+            });
+          }}
+        >
+          {references.map((image, index) => (
+            <div
+              className={`reference-item ${dragState?.id === image.id ? "is-dragging" : ""}`.trim()}
+              key={image.id}
+              title="拖动可以调整顺序"
+              style={{ transform: referenceTransform(index, image.id) }}
+              onMouseDown={(event) => {
+                if (event.button !== 0) return;
+                event.preventDefault();
+                const slotCenters = Array.from(event.currentTarget.parentElement?.children ?? [])
+                  .map((element) => {
+                    const bounds = (element as HTMLElement).getBoundingClientRect();
+                    return {
+                      x: bounds.left + bounds.width / 2,
+                      y: bounds.top + bounds.height / 2,
+                    };
+                  })
+                  .filter((center) => Number.isFinite(center.x) && Number.isFinite(center.y));
+                const startX = Number(event.clientX);
+                const startY = Number(event.clientY);
+                setDragState({
+                  id: image.id,
+                  from: index,
+                  to: index,
+                  startX: Number.isFinite(startX) ? startX : slotCenters[index]?.x ?? 0,
+                  startY: Number.isFinite(startY) ? startY : slotCenters[index]?.y ?? 0,
+                  currentX: Number.isFinite(startX) ? startX : slotCenters[index]?.x ?? 0,
+                  currentY: Number.isFinite(startY) ? startY : slotCenters[index]?.y ?? 0,
+                  slotCenters,
+                });
+              }}
+            >
+              <img src={image.url} alt="" draggable={false} />
+              <span>{index + 1}</span>
               <button
-                className="compact-clear-button reference-clear"
+                className="reference-remove"
+                aria-label="删除参考图"
+                title="删除参考图"
                 type="button"
-                aria-label="清空参考图"
-                disabled={!controller.draft.references.length}
-                onClick={controller.clearReferences}
-              >清空</button>
-              <button
-                className="reference-selection-add"
-                type="button"
-                aria-label="添加当前选区"
-                title="将 Photoshop 当前选区加入参考图"
-                disabled={controller.draft.references.length >= 9 || controller.referenceCaptureStatus === "capturing"}
-                onClick={controller.addSelectionReference}
-              >选区</button>
-              <button
-                type="button"
-                aria-label="添加参考图"
-                title={controller.draft.references.length >= 9 ? "参考图最多 9 张" : "添加本地图片"}
-                disabled={controller.draft.references.length >= 9}
-                onClick={pickLocal}
-              >
-                <UxpIcon name="plus" className="reference-add-glyph" />
-              </button>
-            </div>
-          </div>
-          <div
-            className="reference-list"
-            onMouseMove={(event) => {
-              const clientX = Number(event.clientX);
-              const clientY = Number(event.clientY);
-              if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) return;
-              setDragState((current) => {
-                if (!current || !current.slotCenters.length) return current;
-                const to = current.slotCenters.reduce((closest, center, candidate) => (
-                  ((center.x - clientX) ** 2 + (center.y - clientY) ** 2)
-                    < ((current.slotCenters[closest].x - clientX) ** 2 + (current.slotCenters[closest].y - clientY) ** 2)
-                    ? candidate
-                    : closest
-                ), 0);
-                if (to === current.to && clientX === current.currentX && clientY === current.currentY) return current;
-                return { ...current, to, currentX: clientX, currentY: clientY };
-              });
-            }}
-          >
-            {controller.draft.references.map((image, index) => (
-              <div
-                className={`reference-item ${dragState?.id === image.id ? "is-dragging" : ""}`.trim()}
-                key={image.id}
-                style={{ transform: referenceTransform(index, image.id) }}
-                onMouseDown={(event) => {
-                  if (event.button !== 0) return;
-                  event.preventDefault();
-                  const slotCenters = Array.from(event.currentTarget.parentElement?.children ?? [])
-                    .map((element) => {
-                      const bounds = (element as HTMLElement).getBoundingClientRect();
-                      return {
-                        x: bounds.left + bounds.width / 2,
-                        y: bounds.top + bounds.height / 2,
-                      };
-                    })
-                    .filter((center) => Number.isFinite(center.x) && Number.isFinite(center.y));
-                  const startX = Number(event.clientX);
-                  const startY = Number(event.clientY);
-                  setDragState({
-                    id: image.id,
-                    from: index,
-                    to: index,
-                    startX: Number.isFinite(startX) ? startX : slotCenters[index]?.x ?? 0,
-                    startY: Number.isFinite(startY) ? startY : slotCenters[index]?.y ?? 0,
-                    currentX: Number.isFinite(startX) ? startX : slotCenters[index]?.x ?? 0,
-                    currentY: Number.isFinite(startY) ? startY : slotCenters[index]?.y ?? 0,
-                    slotCenters,
-                  });
+                onMouseDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  controller.removeReference(image.id);
                 }}
-              >
-                <img src={image.url} alt="" draggable={false} />
-                <span>{index + 1}</span>
-                <button
-                  className="reference-remove"
-                  aria-label="删除参考图"
-                  title="删除参考图"
-                  type="button"
-                  onMouseDown={(event) => event.stopPropagation()}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    controller.removeReference(image.id);
-                  }}
-                ><UxpIcon name="close" className="reference-remove-glyph" /></button>
-              </div>
-            ))}
-          </div>
-        </>
-      ) : (
-        <div className="reference-empty-actions">
-          <button className="reference-empty-action" type="button" aria-label="添加参考图" title="添加本地图片" onClick={pickLocal}>
-            <UxpIcon name="plus" className="reference-add-glyph" />本地图片
-          </button>
-          <button
-            className="reference-empty-action"
-            type="button"
-            aria-label="添加当前选区"
-            title="将 Photoshop 当前选区加入参考图"
-            disabled={controller.referenceCaptureStatus === "capturing"}
-            onClick={controller.addSelectionReference}
-          >{controller.referenceCaptureStatus === "capturing" ? "正在截取…" : "当前选区"}</button>
+              ><UxpIcon name="close" className="reference-remove-glyph" /></button>
+            </div>
+          ))}
         </div>
       )}
     </section>
   );
 }
 
-export function GenerateAction({ controller, dragHandle }: { controller: PrototypeController; dragHandle?: ReactNode }) {
+function elapsedLabel(seconds: number) {
+  return `${Math.floor(seconds / 60)}:${(seconds % 60).toString().padStart(2, "0")}`;
+}
+
+export function GenerateAction({ controller }: { controller: PrototypeController }) {
   const active = controller.status === "queued" || controller.status === "running";
-  const stageLabel = {
-    idle: "准备中",
-    capturing: "正在截取 Photoshop 画面",
-    uploading: "正在上传参考图",
-    submitting: "正在提交任务",
-    generating: "供应商生成中",
-    downloading: "正在下载结果",
-    completed: "已完成",
-  }[controller.stage];
-  const elapsed = `${Math.floor(controller.elapsedSeconds / 60).toString().padStart(2, "0")}:${(controller.elapsedSeconds % 60).toString().padStart(2, "0")}`;
   if (active) {
+    const stageLabel = {
+      idle: "准备中",
+      capturing: "正在读取 PS 画面",
+      uploading: "正在上传参考图",
+      submitting: "正在提交",
+      generating: "心宝生成中",
+      downloading: "正在下载图片",
+      completed: "已完成",
+    }[controller.stage];
     return (
-      <div className="generation-progress">
-        <div>{dragHandle}<UxpIcon name="refresh" className="spin" /><span>{stageLabel} · {controller.progress}% · {elapsed}</span><button type="button" onClick={controller.cancelGeneration}><UxpIcon name="stop" />取消</button></div>
-        <i><span style={{ width: `${Math.max(0, Math.min(100, controller.progress))}%` }} /></i>
+      <div className="generation-progress" role="status">
+        <div className="generation-progress__line">
+          <UxpIcon name="refresh" className="spin" />
+          <span>{stageLabel} · 已等 {elapsedLabel(controller.elapsedSeconds)}</span>
+          <button type="button" onClick={controller.cancelGeneration}><UxpIcon name="stop" />取消</button>
+        </div>
+        <i className="generation-progress__bar"><span /></i>
+        <small>通常 1–5 分钟，可以先做别的，好了会自动放进来</small>
       </div>
     );
   }
   return (
     <div className="generate-wrap">
+      <CountStepper controller={controller} />
       <button className="generate-button" type="button" disabled={Boolean(controller.validationMessage)} onClick={controller.startGeneration}>
-        {dragHandle}{controller.validationMessage || `生成 ${controller.draft.count} 张${
+        {controller.validationMessage || `生成 ${controller.draft.count} 张${
           controller.pointEstimate == null ? "" : ` · 约 ${controller.pointEstimate} 积分`
         }`}
       </button>
@@ -802,45 +774,52 @@ export function GenerateAction({ controller, dragHandle }: { controller: Prototy
   );
 }
 
-export function Results({ controller, dragHandle }: { controller: PrototypeController; dragHandle?: ReactNode }) {
-  if (!controller.candidates.length) {
-    return (
-      <div className="results-empty">
-        {dragHandle}<UxpIcon name="layers" /><strong>候选结果</strong><small>生成完成后在此选择并插入</small>
-      </div>
-    );
-  }
+export function Results({ controller }: { controller: PrototypeController }) {
+  const candidates = controller.candidates;
+  const kept = candidates.filter((candidate) => candidate.selected);
+  const busy = controller.previewStatus === "staging" || controller.previewStatus === "switching" || controller.previewStatus === "committing";
+  const previewInPhotoshop = controller.runtimeMode === "uxp" && candidates.some((candidate) => candidate.outputTarget !== "new-document");
+  const keepLabel = !kept.length
+    ? "勾选要保留的图"
+    : kept.length === 1 && kept[0].id === controller.activeCandidateId
+      ? "保留这张"
+      : `保留 ${kept.length} 张`;
   return (
     <section className="results">
       <div className="results-toolbar">
-        <span>{dragHandle}<strong>{controller.candidates.length} 个候选</strong><small>{controller.outputRatio}</small></span>
-        <div><button type="button" onClick={controller.returnToConfiguration}>返回修改</button></div>
+        <strong>{candidates.length} 张结果</strong>
+        <button className="text-button" type="button" onClick={controller.returnToConfiguration}>全不要，返回修改</button>
       </div>
-      <div className="preview-hint">
+      <p className="field-hint">
         {controller.previewStatus === "staging"
-          ? "正在将候选放入 Photoshop 预览…"
+          ? "正在放进 PS 预览…"
           : controller.previewStatus === "switching"
             ? "正在切换预览…"
-            : "点击候选图即可在 Photoshop 中实时预览"}
-      </div>
+            : previewInPhotoshop
+              ? "点图片在 PS 里预览；想多留几张就勾选"
+              : "勾选要保留的图，点 ⌕ 放大看"}
+      </p>
       <div className="candidate-grid">
-        {controller.candidates.map((candidate) => (
-          <article key={candidate.id} className={candidate.selected ? "is-selected is-previewing" : ""}>
-            <button className="candidate-select" type="button" aria-label={`选择${candidate.title}`} onClick={() => controller.toggleCandidate(candidate.id)}>
-              {candidate.selected && <UxpIcon name="check" />}
-            </button>
-            <img src={candidate.url} alt={candidate.title} onClick={() => controller.activateCandidate(candidate.id)} />
-            <button className="candidate-zoom" type="button" aria-label={`放大${candidate.title}`} onClick={() => controller.setPreviewCandidate(candidate)}>
-              <UxpIcon name="zoom" />
-            </button>
-            <span>{candidate.title}</span>
-          </article>
-        ))}
+        {candidates.map((candidate, index) => {
+          const previewing = candidate.id === controller.activeCandidateId;
+          return (
+            <article key={candidate.id} className={`${candidate.selected ? "is-selected" : ""} ${previewing ? "is-previewing" : ""}`.trim()}>
+              <button className="candidate-select" type="button" role="checkbox" aria-checked={candidate.selected} aria-label={`保留第 ${index + 1} 张`} onClick={() => controller.toggleCandidate(candidate.id)}>
+                {candidate.selected && <UxpIcon name="check" />}
+              </button>
+              <img src={candidate.url} alt={`第 ${index + 1} 张`} onClick={() => controller.activateCandidate(candidate.id)} />
+              <button className="candidate-zoom" type="button" aria-label={`放大第 ${index + 1} 张`} onClick={() => controller.setPreviewCandidate(candidate)}>
+                <UxpIcon name="zoom" />
+              </button>
+              <span>第 {index + 1} 张{previewing && previewInPhotoshop ? " · 预览中" : ""}</span>
+            </article>
+          );
+        })}
       </div>
-      <button className="insert-button" type="button" disabled={!controller.selectedCount || controller.previewStatus === "staging" || controller.previewStatus === "switching" || controller.previewStatus === "committing"} onClick={controller.insertSelected}>
-        <UxpIcon name="check" />保留当前候选
+      <button className="insert-button" type="button" disabled={!kept.length || busy} onClick={controller.insertSelected}>
+        <UxpIcon name="check" />{keepLabel}
       </button>
-      <small className="non-destructive">其他候选仅作为临时预览，确认后会自动移除</small>
+      <p className="field-hint field-hint--center">没勾选的不会留在文档里，3 天内可在云端记录找回</p>
     </section>
   );
 }
@@ -851,29 +830,17 @@ export function WriteRecovery({ controller }: { controller: PrototypeController 
     <section className="write-recovery" aria-label="图片写入恢复">
       <div className="write-recovery-heading">
         <UxpIcon name="status" />
-        <span><strong>图片已生成，重试写入</strong><small>生成结果仍保留在当前文档会话中</small></span>
+        <span><strong>图片已生成，还没放进文档</strong><small>图还在，不用重新生成</small></span>
       </div>
       {candidate && <img src={candidate.url} alt="已生成但尚未写入的图片" />}
       {controller.writeError && <p role="alert">{controller.writeError}</p>}
       <div className="write-recovery-actions">
         <button type="button" disabled={controller.writeStatus === "writing"} onClick={controller.retryGeneratedWrite}>
-          <UxpIcon name="refresh" />{controller.writeStatus === "writing" ? "正在写入…" : "重试写入"}
+          <UxpIcon name="refresh" />{controller.writeStatus === "writing" ? "正在放进去…" : "再试一次"}
         </button>
-        <button type="button" disabled={controller.writeStatus === "writing"} onClick={controller.discardGeneratedResult}>放弃结果</button>
+        <button type="button" disabled={controller.writeStatus === "writing"} onClick={controller.discardGeneratedResult}>不要了</button>
       </div>
     </section>
-  );
-}
-
-export function Disclosure({ title, summary, children, open = false, onToggle, dragHandle }: { title: string; summary?: string; children: ReactNode; open?: boolean; onToggle: () => void; dragHandle?: ReactNode }) {
-  return (
-    <div className={`disclosure ${open ? "is-open" : ""}`}>
-      <button className="disclosure-summary" type="button" aria-expanded={open} onClick={onToggle}>
-        <span>{dragHandle}<strong>{title}</strong>{summary && <small>{summary}</small>}</span>
-        <b className="disclosure-toggle" aria-hidden="true">{open ? "−" : "+"}</b>
-      </button>
-      <div className="disclosure-content" hidden={!open} aria-hidden={!open}>{children}</div>
-    </div>
   );
 }
 
@@ -890,10 +857,10 @@ function ThemePicker({ controller }: { controller: PrototypeController }) {
   const currentTheme = THEME_OPTIONS.find((theme) => theme.key === controller.theme) ?? THEME_OPTIONS[0];
   return (
     <section className="settings-group appearance-settings">
-      <div className="settings-group__heading"><span><UxpIcon name="theme" />外观</span><small>当前：{currentTheme.label}</small></div>
+      <div className="settings-group__heading"><span><UxpIcon name="theme" />外观</span><small>{currentTheme.label}</small></div>
       <div className="theme-grid">
         {THEME_OPTIONS.map((theme) => (
-          <button type="button" key={theme.key} aria-label={theme.label} data-description={`${theme.label} · ${theme.description}`} className={`theme-option theme-option--${theme.key} ${controller.theme === theme.key ? "is-active" : ""}`} onClick={() => controller.setTheme(theme.key)}>
+          <button type="button" key={theme.key} aria-label={theme.label} title={`${theme.label} · ${theme.description}`} className={`theme-option theme-option--${theme.key} ${controller.theme === theme.key ? "is-active" : ""}`} onClick={() => controller.setTheme(theme.key)}>
             {controller.theme === theme.key && <UxpIcon name="check" className="theme-check" />}
           </button>
         ))}
@@ -902,45 +869,46 @@ function ThemePicker({ controller }: { controller: PrototypeController }) {
   );
 }
 
+function testButtonLabel(status: PrototypeController["settings"]["connectionStatus"]) {
+  if (status === "testing") return "检测中…";
+  if (status === "connected" || status === "reachable") return "已连接";
+  if (status === "failed") return "重新检测";
+  return "检测连接";
+}
+
 export function GlobalOverlays({ controller }: { controller: PrototypeController }) {
+  const status = controller.settings.connectionStatus;
   return (
     <>
       {controller.settingsOpen && (
         <div className="overlay" onMouseDown={() => controller.setSettingsOpen(false)}>
           <aside className="settings-drawer" onMouseDown={(event) => event.stopPropagation()}>
-            <header><span><UxpIcon name="settings" />连接设置</span><button type="button" aria-label="关闭设置" onClick={() => controller.setSettingsOpen(false)}><UxpIcon name="close" className="settings-close-glyph" /></button></header>
-            <PrototypeNotice controller={controller} />
+            <header><span><UxpIcon name="settings" />设置</span><button type="button" aria-label="关闭设置" onClick={() => controller.setSettingsOpen(false)}><UxpIcon name="close" className="settings-close-glyph" /></button></header>
+            {controller.runtimeMode !== "uxp" && <div className="prototype-notice">浏览器演示：Key 只在这个页面里，不会写入 Photoshop</div>}
             <div className="settings-body">
               <section className="settings-group api-connection-settings">
-                <div className="settings-group__heading"><span><UxpIcon name="key" />API 连接</span><small>心宝及兼容服务</small></div>
-                <label><span>Base URL</span><input value={controller.settings.baseUrl} onChange={(event) => controller.setSettings({ ...controller.settings, baseUrl: event.target.value, connectionStatus: "idle" })} /></label>
-                <label><span>API Key</span><input type="password" autoComplete="off" placeholder={controller.runtimeMode === "uxp" ? "保存到 UXP 安全存储" : "仅保存在当前页面内存"} value={controller.settings.apiKey} onChange={(event) => controller.setSettings({ ...controller.settings, apiKey: event.target.value, connectionStatus: "idle" })} /><small>{controller.runtimeMode === "uxp" ? "由 Photoshop UXP 安全存储保存，仅发送到当前 Base URL。" : "仅驻留当前页面内存。"}</small></label>
-                <button className={`settings-action settings-action--primary ${controller.credentialSaveStatus === "saved" ? "is-connected" : ""}`} type="button" onClick={controller.saveApiKey} disabled={controller.credentialSaveStatus === "saving"}>
-                  <UxpIcon name={controller.credentialSaveStatus === "saving" ? "refresh" : "lock"} className={controller.credentialSaveStatus === "saving" ? "spin" : ""} />
-                  {controller.credentialSaveStatus === "saving" ? "正在保存…" : controller.credentialSaveStatus === "saved" && controller.runtimeMode === "uxp" ? "已保存至 UXP 安全存储" : "保存 API 设置"}
-                </button>
-                <div className="settings-secondary-actions">
-                  <button className="settings-action" type="button" onClick={controller.refreshModels}><UxpIcon name="refresh" />刷新模型</button>
-                  <button className={`settings-action ${controller.settings.connectionStatus === "connected" ? "is-connected" : ""}`} type="button" aria-label="测试连接" onClick={controller.testConnection}>
-                    <UxpIcon name={controller.settings.connectionStatus === "testing" ? "refresh" : "status"} className={controller.settings.connectionStatus === "testing" ? "spin" : "status-icon"} />
-                    {controller.settings.connectionStatus === "testing" ? "测试中…" : controller.settings.connectionStatus === "connected" ? "凭据正常" : controller.settings.connectionStatus === "reachable" ? "服务可达" : controller.settings.connectionStatus === "failed" ? "重新测试" : "测试连接"}
+                <div className="settings-group__heading"><span><UxpIcon name="key" />心宝账号</span></div>
+                <label><span>接口地址</span><input value={controller.settings.baseUrl} onChange={(event) => controller.setSettings({ ...controller.settings, baseUrl: event.target.value, connectionStatus: "idle" })} /></label>
+                <label><span>Key</span><input type="password" autoComplete="off" placeholder="粘贴心宝给的 Key" value={controller.settings.apiKey} onChange={(event) => controller.setSettings({ ...controller.settings, apiKey: event.target.value, connectionStatus: "idle" })} /><small>{controller.runtimeMode === "uxp" ? "只保存在这台电脑的 PS 里，只发给上面的接口地址" : "只在当前页面里，刷新就没了"}</small></label>
+                <div className="settings-actions">
+                  <button className={`settings-action settings-action--primary ${controller.credentialSaveStatus === "saved" ? "is-connected" : ""}`} type="button" onClick={controller.saveApiKey} disabled={controller.credentialSaveStatus === "saving"}>
+                    <UxpIcon name={controller.credentialSaveStatus === "saving" ? "refresh" : "lock"} className={controller.credentialSaveStatus === "saving" ? "spin" : ""} />
+                    {controller.credentialSaveStatus === "saving" ? "正在保存…" : controller.credentialSaveStatus === "saved" ? "已保存" : "保存"}
+                  </button>
+                  <button className={`settings-action ${status === "connected" || status === "reachable" ? "is-connected" : ""}`} type="button" aria-label="检测连接" onClick={controller.testConnection}>
+                    <UxpIcon name={status === "testing" ? "refresh" : "status"} className={status === "testing" ? "spin" : "status-icon"} />
+                    {testButtonLabel(status)}
                   </button>
                 </div>
               </section>
 
-              <section className="settings-group model-capability-settings">
-                <div className="settings-group__heading"><span>模型能力</span><small>{controller.settings.providerSnapshot ? `${controller.settings.providerSnapshot.models.length} 个模型` : "尚未同步"}</small></div>
-                <div className={`provider-meta ${controller.settings.providerSnapshot?.stale ? "is-stale" : ""}`}>
-                  <span>能力来源</span><strong>{capabilitySourceLabel(controller.settings.providerSnapshot)}</strong>
-                  {controller.settings.providerSnapshot && <small>最近同步：{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(controller.settings.providerSnapshot.fetchedAt)}</small>}
-                </div>
-                <div className="generation-memory-settings">
-                  <label className="settings-toggle">
-                    <span><strong>记忆最后设置</strong><small>两种模式分别保存</small></span>
-                    <input type="checkbox" checked={controller.rememberLastSettings} disabled={!controller.generationSettingsReady} onChange={(event) => controller.setRememberLastSettings(event.target.checked)} />
-                  </label>
-                  <button className="settings-action settings-action--compact" type="button" onClick={controller.restoreDefaultGenerationSettings}>恢复默认设置</button>
-                </div>
+              <section className="settings-group">
+                <div className="settings-group__heading"><span>生成设置</span></div>
+                <label className="settings-toggle">
+                  <span><strong>记住上次的设置</strong><small>文生图、图生图各记各的</small></span>
+                  <input type="checkbox" checked={controller.rememberLastSettings} disabled={!controller.generationSettingsReady} onChange={(event) => controller.setRememberLastSettings(event.target.checked)} />
+                </label>
+                <button className="settings-action settings-action--compact" type="button" onClick={controller.restoreDefaultGenerationSettings}>恢复默认设置</button>
               </section>
 
               <ThemePicker controller={controller} />

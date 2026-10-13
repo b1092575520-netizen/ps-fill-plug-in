@@ -1,9 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  DEFAULT_PROMPT_NOTES,
   PROMPT_NOTE_STORAGE_KEY,
+  addFavoritePrompt,
+  findNoteByPrompt,
   loadPromptNotes,
+  markPromptNoteUsed,
   normalizePromptNotes,
+  noteTitleFromPrompt,
+  renamePromptNote,
   savePromptNotes,
 } from "../src/promptNotebookStorage";
 import type { PromptNote } from "../src/types";
@@ -26,6 +30,8 @@ const note: PromptNote = {
   order: 0,
   createdAt: 1,
   updatedAt: 1,
+  useCount: 0,
+  lastUsedAt: 0,
 };
 
 describe("prompt notebook storage", () => {
@@ -33,11 +39,10 @@ describe("prompt notebook storage", () => {
     vi.unstubAllGlobals();
   });
 
-  it("loads the built-in starter notes only when storage is missing", async () => {
+  it("starts empty instead of with sample prompts when nothing was saved", async () => {
     const storage = browserStorage();
     vi.stubGlobal("window", { localStorage: storage });
-    const loaded = await loadPromptNotes();
-    expect(loaded).toEqual(DEFAULT_PROMPT_NOTES);
+    await expect(loadPromptNotes()).resolves.toEqual([]);
     expect(storage.getItem).toHaveBeenCalledWith(PROMPT_NOTE_STORAGE_KEY);
   });
 
@@ -57,13 +62,36 @@ describe("prompt notebook storage", () => {
     await expect(loadPromptNotes()).resolves.toEqual([]);
   });
 
-  it("normalizes legacy notes and keeps pinned notes first", () => {
+  it("reads legacy notes, fills usage fields and puts busier notes first", () => {
     const normalized = normalizePromptNotes([
-      { id: "old", title: "旧格式", prompt: " 保留这条 ", order: 1 },
-      { id: "pin", title: "置顶", prompt: "优先", pinned: true, order: 9, mode: "redraw" },
+      { id: "old", title: "旧格式", prompt: " 保留这条 ", order: 0 },
+      { id: "busy", title: "常用", prompt: "常用的那条", order: 9, mode: "redraw", useCount: 3 },
+      { id: "dup", title: "重复", prompt: "保留这条", order: 2 },
     ]);
-    expect(normalized.map((item) => item.id)).toEqual(["pin", "old"]);
-    expect(normalized[1]).toMatchObject({ mode: "all", pinned: false, prompt: "保留这条" });
+    expect(normalized.map((item) => item.id)).toEqual(["busy", "old"]);
+    expect(normalized[1]).toMatchObject({ mode: "all", prompt: "保留这条", useCount: 0, lastUsedAt: 0 });
+  });
+
+  it("titles a new favorite from the start of its first line", () => {
+    expect(noteTitleFromPrompt("把背景换成纯蓝色证件照背景，人物保持不变")).toBe("把背景换成纯蓝色证件…");
+    expect(noteTitleFromPrompt("换蓝底\n第二行")).toBe("换蓝底");
+  });
+
+  it("adds a favorite once, counts its use and renames it", () => {
+    const added = addFavoritePrompt([], "  一只橘猫  ", 10);
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatchObject({ prompt: "一只橘猫", title: "一只橘猫", useCount: 0 });
+    expect(addFavoritePrompt(added, "一只橘猫", 11)).toBe(added);
+    expect(findNoteByPrompt(added, " 一只橘猫 ")?.id).toBe(added[0].id);
+
+    const withSecond = addFavoritePrompt(added, "第二条", 12);
+    const used = markPromptNoteUsed(withSecond, withSecond[1].id, 20);
+    expect(used.map((item) => item.prompt)).toEqual(["第二条", "一只橘猫"]);
+    expect(used[0]).toMatchObject({ useCount: 1, lastUsedAt: 20 });
+
+    const renamed = renamePromptNote(used, used[0].id, " 证件照 ");
+    expect(renamed[0].title).toBe("证件照");
+    expect(renamePromptNote(renamed, renamed[0].id, " ")[0].title).toBe("第二条");
   });
 
   it("drops invalid empty records without dropping valid records", () => {

@@ -208,7 +208,7 @@ describe("useCloudRecords", () => {
     });
     expect(requests[0].signal.aborted).toBe(true);
     expect(current.status).toBe("error");
-    expect(current.error).toBe("请先在设置中保存 API Key");
+    expect(current.error).toBe("请先在设置里填好 Key");
 
     await act(async () => requests[0].resolve([{
       taskId: "stale-after-clear", model: "model", status: "succeeded", createdAt: null,

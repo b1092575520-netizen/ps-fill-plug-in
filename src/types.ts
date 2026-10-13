@@ -123,6 +123,9 @@ export interface PromptNote {
   order: number;
   createdAt: number;
   updatedAt: number;
+  /** How often the note was put into the prompt box; busier notes come first. */
+  useCount: number;
+  lastUsedAt: number;
 }
 
 export interface PromptHistoryEntry {
@@ -156,7 +159,7 @@ export const MODE_META: Record<GenerationMode, { label: string; description: str
 };
 
 export const QUALITY_META: Record<ImageQuality, { label: string; hint: string }> = {
-  low: { label: "低", hint: "更快" },
-  medium: { label: "中", hint: "均衡" },
-  high: { label: "高", hint: "精细" },
+  low: { label: "粗略", hint: "最快" },
+  medium: { label: "标准", hint: "较快" },
+  high: { label: "精细", hint: "较慢" },
 };

@@ -273,7 +273,7 @@ describe("OpenAIImageProvider", () => {
 
     await expect(provider.generate({
       prompt: "test", model: "gpt-image-2-oai", n: 1, responseFormat: "url",
-    }, new AbortController().signal)).rejects.toThrow("API 返回的文件不是图片");
+    }, new AbortController().signal)).rejects.toThrow("心宝返回的文件不是图片");
   });
 
   it("sends reference URLs with the documented image field", async () => {

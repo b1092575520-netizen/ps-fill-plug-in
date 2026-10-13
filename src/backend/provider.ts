@@ -432,7 +432,7 @@ export class OpenAIImageProvider {
     }
 
     const taskId = data.id ?? data.task_id;
-    if (!taskId) throw new Error("API 未返回图片或任务 ID");
+    if (!taskId) throw new Error("心宝没有返回图片，也没有返回任务编号");
     await controls?.taskAccepted(taskId);
     const xinbao = this.isXinbaoAsync();
     const pollingUrl = xinbao
@@ -594,13 +594,13 @@ export class OpenAIImageProvider {
   }
 
   private async download(items: OutputItem[], signal: AbortSignal) {
-    if (!items.length) throw new Error("API 任务成功但没有返回图片");
+    if (!items.length) throw new Error("心宝说生成成功了，但没有给图片");
     return Promise.all(items.map(async (item, index): Promise<GeneratedImageAsset> => {
       ensureNotAborted(signal);
       if (item.b64_json) {
         return { id: `generated-${index}`, bytes: decodeBase64(item.b64_json), mimeType: "image/png" };
       }
-      if (!item.url) throw new Error("API 返回了无法识别的图片结果");
+      if (!item.url) throw new Error("心宝返回的图片读不出来");
       return this.downloadImage(item.url, index, signal);
     }));
   }
@@ -616,7 +616,7 @@ export class OpenAIImageProvider {
         retryable = false;
         const mimeType = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
         if (!mimeType?.startsWith("image/")) {
-          throw new Error("API 返回的文件不是图片");
+          throw new Error("心宝返回的文件不是图片");
         }
         if (!["image/png", "image/jpeg", "image/jpg", "image/webp"].includes(mimeType)) {
           throw new Error(`API 返回了不支持的图片格式（${mimeType}）`);
@@ -624,7 +624,7 @@ export class OpenAIImageProvider {
         retryable = true;
         const bytes = new Uint8Array(await response.arrayBuffer());
         retryable = false;
-        if (!bytes.length) throw new Error("API 返回了空图片文件");
+        if (!bytes.length) throw new Error("心宝返回了空图片");
         return {
           id: `generated-${index}`,
           bytes,

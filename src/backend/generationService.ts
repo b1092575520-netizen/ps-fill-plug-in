@@ -96,7 +96,7 @@ export function realGenerationBlocker(
   isUxp: boolean,
   context?: PhotoshopContext | null,
 ) {
-  if (isUxp && !apiKey.trim()) return "请先配置 API Key";
+  if (isUxp && !apiKey.trim()) return "请先在设置里填 Key";
   const needsDocument = draft.mode !== "text" || draft.outputTarget === "current-document";
   if (isUxp && context === null && needsDocument) return "请先打开 Photoshop 文档";
   if (!draft.prompt.trim()) {

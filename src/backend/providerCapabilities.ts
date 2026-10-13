@@ -43,11 +43,15 @@ export const XINBAO_SIZE_MAP: NonNullable<ModelCapability["sizeMap"]> = {
 };
 
 function xinbaoModel(id: typeof XINBAO_MODELS[number]): ModelCapability {
+  const oai = id === "gpt-image-2-oai";
   return {
     id,
     confirmedImage: true,
-    resolutions: ["1K", "2K", "4K"],
-    qualityOptions: id === "gpt-image-2-oai" ? ["low", "medium", "high"] : [],
+    // G-2.0 is priced for 1-2K only and measured at about 1.5K even when 2K
+    // is requested (2026-10-12), so 4K is not offered.
+    resolutions: oai ? ["1K", "2K", "4K"] : ["1K", "2K"],
+    // Every OAI quality costs the same points; "low" only makes worse images.
+    qualityOptions: oai ? ["high", "medium"] : [],
     aspectRatios: [...ASPECT_RATIOS],
     defaultResolution: "2K",
     sizeMap: XINBAO_SIZE_MAP,
@@ -174,6 +178,16 @@ export function capabilityForModel(snapshot: ProviderSnapshot | null, model: str
   if (!snapshot) return undefined;
   if (model === "auto") return snapshot.models.find((item) => item.confirmedImage);
   return snapshot.models.find((item) => item.id === model);
+}
+
+const MODEL_NAMES: Record<string, string> = {
+  "gpt-image-2-oai": "G-2.0 OAI",
+  "gpt-image-2": "G-2.0",
+};
+
+/** The name Xinbao's own points table uses for a model. */
+export function modelDisplayName(model: string) {
+  return MODEL_NAMES[model] ?? model;
 }
 
 export function capabilitySourceLabel(snapshot: ProviderSnapshot | null) {

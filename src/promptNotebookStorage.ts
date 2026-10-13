@@ -3,39 +3,6 @@ import type { GenerationMode, PromptNote } from "./types";
 const STORAGE_KEY = "generative-fill.prompt-notebook.v1";
 const DATA_FILE_NAME = "prompt-notebook.v1.json";
 
-export const DEFAULT_PROMPT_NOTES: PromptNote[] = [
-  {
-    id: "note-sunset-garden",
-    title: "黄昏花海",
-    prompt: "柔和黄昏光里的紫色花海，电影感摄影，细腻层次",
-    mode: "all",
-    pinned: true,
-    order: 0,
-    createdAt: 0,
-    updatedAt: 0,
-  },
-  {
-    id: "note-product-studio",
-    title: "产品棚拍",
-    prompt: "极简产品棚拍，柔和侧光，干净背景，商业广告质感",
-    mode: "text",
-    pinned: false,
-    order: 1,
-    createdAt: 0,
-    updatedAt: 0,
-  },
-  {
-    id: "note-architecture",
-    title: "建筑空间",
-    prompt: "现代建筑空间，暖色自然光，真实材质，广角摄影",
-    mode: "redraw",
-    pinned: false,
-    order: 2,
-    createdAt: 0,
-    updatedAt: 0,
-  },
-];
-
 type UxpRequire = (moduleName: string) => any;
 type UxpFile = { read: () => Promise<string>; write: (value: string) => Promise<void> };
 type UxpFolder = {
@@ -54,34 +21,83 @@ function getUxpRequire(): UxpRequire | null {
   }
 }
 
-function cloneNotes(notes: PromptNote[]) {
-  return notes.map((note) => ({ ...note }));
-}
-
 function isMode(value: unknown): value is GenerationMode | "all" {
   return value === "all" || value === "text" || value === "redraw";
 }
 
+function finiteOr(value: unknown, fallback: number) {
+  return Number.isFinite(value) ? Number(value) : fallback;
+}
+
+/** Favorites the user reaches for most come first; ties keep saving order. */
 export function normalizePromptNotes(value: unknown): PromptNote[] {
   if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
   return value.flatMap((item, index) => {
     if (!item || typeof item !== "object") return [];
     const record = item as Record<string, unknown>;
     const prompt = typeof record.prompt === "string" ? record.prompt.trim() : "";
-    if (!prompt) return [];
+    if (!prompt || seen.has(prompt)) return [];
+    seen.add(prompt);
     const now = Date.now();
     return [{
       id: typeof record.id === "string" && record.id.trim() ? record.id : `note-${now}-${index}`,
-      title: typeof record.title === "string" && record.title.trim() ? record.title.trim() : `提示词 ${index + 1}`,
+      title: typeof record.title === "string" && record.title.trim() ? record.title.trim() : noteTitleFromPrompt(prompt),
       prompt,
       mode: isMode(record.mode) ? record.mode : "all",
       pinned: record.pinned === true,
-      order: Number.isFinite(record.order) ? Number(record.order) : index,
-      createdAt: Number.isFinite(record.createdAt) ? Number(record.createdAt) : now,
-      updatedAt: Number.isFinite(record.updatedAt) ? Number(record.updatedAt) : now,
+      order: finiteOr(record.order, index),
+      createdAt: finiteOr(record.createdAt, now),
+      updatedAt: finiteOr(record.updatedAt, now),
+      useCount: Math.max(0, Math.round(finiteOr(record.useCount, 0))),
+      lastUsedAt: finiteOr(record.lastUsedAt, 0),
     }];
-  }).sort((a, b) => Number(b.pinned) - Number(a.pinned) || a.order - b.order || a.updatedAt - b.updatedAt)
+  }).sort((a, b) => b.useCount - a.useCount || a.order - b.order || a.createdAt - b.createdAt)
     .map((note, order) => ({ ...note, order }));
+}
+
+const TITLE_LENGTH = 10;
+
+/** A short label for a chip: the start of the prompt's first line. */
+export function noteTitleFromPrompt(prompt: string) {
+  const firstLine = prompt.trim().split(/\r?\n/)[0].trim();
+  const characters = Array.from(firstLine);
+  return characters.length > TITLE_LENGTH ? `${characters.slice(0, TITLE_LENGTH).join("")}…` : firstLine;
+}
+
+export function findNoteByPrompt(notes: PromptNote[], prompt: string) {
+  const text = prompt.trim();
+  return text ? notes.find((note) => note.prompt === text) : undefined;
+}
+
+export function addFavoritePrompt(notes: PromptNote[], prompt: string, now = Date.now()) {
+  const text = prompt.trim();
+  if (!text || findNoteByPrompt(notes, text)) return notes;
+  return normalizePromptNotes([...notes, {
+    id: `note-${now}`,
+    title: noteTitleFromPrompt(text),
+    prompt: text,
+    mode: "all",
+    pinned: false,
+    order: notes.length,
+    createdAt: now,
+    updatedAt: now,
+    useCount: 0,
+    lastUsedAt: 0,
+  }]);
+}
+
+export function markPromptNoteUsed(notes: PromptNote[], id: string, now = Date.now()) {
+  return normalizePromptNotes(notes.map((note) => note.id === id
+    ? { ...note, useCount: note.useCount + 1, lastUsedAt: now }
+    : note));
+}
+
+export function renamePromptNote(notes: PromptNote[], id: string, title: string, now = Date.now()) {
+  const name = title.trim();
+  return normalizePromptNotes(notes.map((note) => note.id === id
+    ? { ...note, title: name || noteTitleFromPrompt(note.prompt), updatedAt: now }
+    : note));
 }
 
 async function readUxpPayload(): Promise<string | null | undefined> {
@@ -116,16 +132,16 @@ async function writeUxpPayload(payload: string) {
 export async function loadPromptNotes(): Promise<PromptNote[]> {
   const uxpPayload = await readUxpPayload();
   if (uxpPayload !== undefined) {
-    if (uxpPayload === null) return cloneNotes(DEFAULT_PROMPT_NOTES);
+    if (uxpPayload === null) return [];
     try {
       return normalizePromptNotes(JSON.parse(uxpPayload));
     } catch {
       return [];
     }
   }
-  if (typeof window === "undefined") return cloneNotes(DEFAULT_PROMPT_NOTES);
+  if (typeof window === "undefined") return [];
   const payload = window.localStorage?.getItem(STORAGE_KEY);
-  if (payload === null || payload === undefined) return cloneNotes(DEFAULT_PROMPT_NOTES);
+  if (payload === null || payload === undefined) return [];
   try {
     return normalizePromptNotes(JSON.parse(payload));
   } catch {

@@ -162,7 +162,7 @@ export function useConnectionSettings({
     const current = settingsRef.current;
     const apiKey = current.apiKey.trim();
     if (!apiKey) {
-      if (showToast) notify("请先填写 API Key", "warning");
+      if (showToast) notify("请先在设置里填 Key", "warning");
       return;
     }
     providerAbortRef.current?.abort();
@@ -192,7 +192,7 @@ export function useConnectionSettings({
     const current = settingsRef.current;
     const apiKey = current.apiKey.trim();
     if (!apiKey) {
-      notify("请先填写 API Key", "warning");
+      notify("请先在设置里填 Key", "warning");
       return;
     }
     providerAbortRef.current?.abort();
@@ -207,7 +207,7 @@ export function useConnectionSettings({
       if (settingsRef.current.baseUrl === current.baseUrl && settingsRef.current.apiKey.trim() === apiKey) {
         setBalance(result.balance);
       }
-      notify(result.snapshot.credentialVerified ? "API 连接及凭据验证正常" : "API 服务可达", result.snapshot.credentialVerified ? "success" : "info");
+      notify(result.snapshot.credentialVerified ? "已连上心宝，Key 正常" : "已连上心宝", result.snapshot.credentialVerified ? "success" : "info");
     }).catch((requestError) => {
       if (controller.signal.aborted || (requestError as Error).name === "AbortError") return;
       setSettingsState((value) => ({ ...value, connectionStatus: "failed" }));
@@ -225,10 +225,10 @@ export function useConnectionSettings({
       if (apiKey) await credentialStore.saveApiKey(apiKey);
       else await credentialStore.deleteApiKey();
       setCredentialSaveStatus("saved");
-      notify(apiKey ? "API Key 已安全保存" : "已删除保存的 API Key", "success");
+      notify(apiKey ? "Key 已保存" : "已删除保存的 Key", "success");
     } catch {
       setCredentialSaveStatus("error");
-      notify("API Key 安全存储写入失败", "warning");
+      notify("Key 保存失败，请重试", "warning");
     }
   }, [credentialStore, notify]);
 
@@ -242,7 +242,7 @@ export function useConnectionSettings({
         return next;
       });
       setCredentialSaveStatus("saved");
-    }).catch(() => notify("无法读取 UXP 安全存储中的 API Key", "warning"));
+    }).catch(() => notify("读不到保存的 Key，请在设置里重新填一次", "warning"));
     return () => { disposed = true; };
   }, [credentialStore, notify]);
 

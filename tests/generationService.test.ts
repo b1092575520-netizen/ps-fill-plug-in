@@ -36,7 +36,7 @@ describe("generateFromDraft", () => {
       "",
       true,
       context,
-    )).toBe("请先配置 API Key");
+    )).toBe("请先在设置里填 Key");
   });
 
   it("requires a Photoshop document before current-document generation", () => {

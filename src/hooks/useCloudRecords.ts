@@ -141,7 +141,7 @@ export function useCloudRecords({
       recordsAbortRef.current?.abort();
       setRecords([]);
       setStatus("error");
-      setError("请先在设置中保存 API Key");
+      setError("请先在设置里填好 Key");
       return;
     }
     recordsAbortRef.current?.abort();
