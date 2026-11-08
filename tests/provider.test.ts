@@ -216,7 +216,7 @@ describe("OpenAIImageProvider", () => {
     expect(generationPosts).toHaveLength(1);
   });
 
-  it("blocks another document clicked six seconds later before its paid fetch", async () => {
+  it("submits another document while the first document's paid fetch is still waiting", async () => {
     const coordinator = new RemoteRequestCoordinator({
       load: async () => [],
       save: async () => undefined,
@@ -256,8 +256,10 @@ describe("OpenAIImageProvider", () => {
         submittedAt: firstSubmittedAt + 6_000,
         promptHash: "sha256:b",
       },
-    }, new AbortController().signal)).rejects.toThrow("上一张图还在心宝生成中");
-    expect(secondFetch).not.toHaveBeenCalled();
+    }, new AbortController().signal)).resolves.toHaveLength(1);
+    expect(secondFetch).toHaveBeenCalledOnce();
+    expect(coordinator.isBusy("doc-a")).toBe(true);
+    expect(coordinator.isBusy("doc-b")).toBe(false);
 
     finishFirst();
     await expect(first).resolves.toHaveLength(1);

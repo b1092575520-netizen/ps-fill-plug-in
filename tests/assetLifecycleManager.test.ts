@@ -93,4 +93,20 @@ describe("AssetLifecycleManager", () => {
     await expect(manager.reuseUpload("doc-a", "blob-1", upload)).resolves.toBe("https://example.test/second.png");
     expect(upload).toHaveBeenCalledTimes(2);
   });
+
+  it("shares an in-flight fallback upload but never reuses a signed fallback URL in a later task", async () => {
+    const manager = new AssetLifecycleManager();
+    const upload = vi.fn().mockResolvedValueOnce("https://tmpfiles.org/dl/123.signature/first/reference.png")
+      .mockResolvedValueOnce("https://tmpfiles.org/dl/456.signature/second/reference.png");
+    const first = manager.reuseUpload("doc-a", "blob-1", upload);
+    const concurrent = manager.reuseUpload("doc-a", "blob-1", upload);
+    await expect(Promise.all([first, concurrent])).resolves.toEqual([
+      "https://tmpfiles.org/dl/123.signature/first/reference.png",
+      "https://tmpfiles.org/dl/123.signature/first/reference.png",
+    ]);
+    expect(upload).toHaveBeenCalledOnce();
+    await expect(manager.reuseUpload("doc-a", "blob-1", upload))
+      .resolves.toBe("https://tmpfiles.org/dl/456.signature/second/reference.png");
+    expect(upload).toHaveBeenCalledTimes(2);
+  });
 });

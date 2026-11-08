@@ -81,24 +81,42 @@ describe("remote request ledger", () => {
     expect(coordinator.snapshot()[0]).toMatchObject({ postCount: 1, status: "completed" });
   });
 
-  it("blocks another document while the account has a paid task", async () => {
+  it("runs different documents concurrently and only blocks another request for the same document", async () => {
     const memory = memoryStorage();
     const coordinator = new RemoteRequestCoordinator(memory.storage, () => NOW);
     let resolve!: () => void;
+    let resolveSecond!: () => void;
     const first = coordinator.run(audit("request-a", "doc-a"), "gpt-image-2-oai", async (controls) => {
       await controls.beforeGenerationPost();
       await controls.taskAccepted("task-a");
       return new Promise<void>((done) => { resolve = done; });
     });
-    await vi.waitFor(() => expect(coordinator.snapshot()[0]?.postCount).toBe(1));
+    const second = coordinator.run(audit("request-b", "doc-b"), "gpt-image-2-oai", async (controls) => {
+      await controls.beforeGenerationPost();
+      await controls.taskAccepted("task-b");
+      return new Promise<void>((done) => { resolveSecond = done; });
+    });
+    await vi.waitFor(() => expect(Boolean(resolve && resolveSecond)).toBe(true));
+    expect(coordinator.isBusy("doc-a")).toBe(true);
+    expect(coordinator.isBusy("doc-b")).toBe(true);
+    expect(coordinator.isBusy("doc-c")).toBe(false);
 
     await expect(coordinator.run(
-      audit("request-b", "doc-b"),
+      audit("request-a-again", "doc-a"),
       "gpt-image-2-oai",
       vi.fn(async () => undefined),
     )).rejects.toThrow("上一张图还在心宝生成中");
     resolve();
     await first;
+    expect(coordinator.isBusy("doc-a")).toBe(false);
+    expect(coordinator.isBusy("doc-b")).toBe(true);
+    resolveSecond();
+    await second;
+    expect(coordinator.isBusy()).toBe(false);
+    expect(memory.value()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ documentId: "doc-a", providerTaskId: "task-a", postCount: 1, status: "completed" }),
+      expect.objectContaining({ documentId: "doc-b", providerTaskId: "task-b", postCount: 1, status: "completed" }),
+    ]));
   });
 
   it("never resubmits a completed local request after a component rebuild", async () => {
@@ -128,14 +146,18 @@ describe("remote request ledger", () => {
     expect(coordinator.snapshot()[0]).toMatchObject({ postCount: 1, status: "uncertain" });
     expect(coordinator.submissionState("uncertain")).toBe("sent");
     await expect(coordinator.run(
-      audit("next", "doc-b"),
+      audit("next", "doc-a"),
       "gpt-image-2-oai",
       vi.fn(async () => undefined),
     )).rejects.toThrow("3 分钟内暂不能重新生成");
+    await expect(coordinator.run(audit("other-document", "doc-b"), "gpt-image-2-oai", async () => "ok"))
+      .resolves.toBe("ok");
 
     const restarted = new RemoteRequestCoordinator(memory.storage, () => now);
     await restarted.listRecords();
     expect(restarted.isBusy()).toBe(true);
+    expect(restarted.isBusy("doc-a")).toBe(true);
+    expect(restarted.isBusy("doc-b")).toBe(false);
 
     now = NOW + 3 * 60 * 1000 + 1;
     expect(coordinator.isBusy()).toBe(false);
@@ -195,7 +217,7 @@ describe("remote request ledger", () => {
     expect(coordinator.isBusy()).toBe(false);
   });
 
-  it("reconciles terminal provider aliases and releases the account lock", async () => {
+  it("reconciles terminal provider aliases and releases the document lock", async () => {
     const memory = memoryStorage();
     const coordinator = new RemoteRequestCoordinator(memory.storage, () => NOW);
     await expect(coordinator.run(audit("reconcile"), "gpt-image-2-oai", async (controls) => {
@@ -210,5 +232,74 @@ describe("remote request ledger", () => {
     await expect(coordinator.reconcileProviderTask("task-reconcile", "succeeded")).resolves.toBeNull();
     expect(coordinator.isBusy()).toBe(false);
     expect(coordinator.snapshot()[0]).toMatchObject({ status: "completed" });
+  });
+
+  it("restores every document lock after restart and reconciles each task independently", async () => {
+    const memory = memoryStorage(["a", "b"].map((id) => ({
+      ...audit(`request-${id}`, `doc-${id}`), model: "gpt-image-2-oai", postCount: 1,
+      providerTaskId: `task-${id}`, status: "uncertain",
+    })));
+    const coordinator = new RemoteRequestCoordinator(memory.storage, () => NOW);
+    await coordinator.listRecords();
+    expect(coordinator.isBusy("doc-a")).toBe(true);
+    expect(coordinator.isBusy("doc-b")).toBe(true);
+    expect(coordinator.isBusy("doc-c")).toBe(false);
+    await coordinator.reconcileProviderTask("task-a", "succeeded");
+    expect(coordinator.isBusy("doc-a")).toBe(false);
+    expect(coordinator.isBusy("doc-b")).toBe(true);
+    expect(await coordinator.detachedPendingTaskIds()).toEqual(["task-b"]);
+    await coordinator.reconcileProviderTask("task-b", "failed");
+    expect(coordinator.isBusy()).toBe(false);
+  });
+
+  it("serializes slow ledger writes without losing either concurrent task", async () => {
+    let activeWrites = 0;
+    let maxWrites = 0;
+    let stored: RemoteRequestRecord[] = [];
+    const storage: RemoteRequestStorage = {
+      load: async () => [],
+      save: async (records) => {
+        activeWrites += 1;
+        maxWrites = Math.max(maxWrites, activeWrites);
+        await new Promise((resolve) => setTimeout(resolve, records.length === 1 ? 8 : 1));
+        stored = structuredClone(records);
+        activeWrites -= 1;
+      },
+    };
+    const coordinator = new RemoteRequestCoordinator(storage, () => NOW);
+    await Promise.all(["a", "b"].map((id) => coordinator.run(
+      audit(`concurrent-${id}`, `doc-${id}`), "gpt-image-2-oai", async (controls) => {
+        await controls.beforeGenerationPost();
+        await controls.taskAccepted(`task-${id}`);
+        return id;
+      },
+    )));
+    expect(maxWrites).toBe(1);
+    expect(stored).toHaveLength(2);
+    expect(stored).toEqual(expect.arrayContaining(["a", "b"].map((id) => expect.objectContaining({
+      documentId: `doc-${id}`, providerTaskId: `task-${id}`, postCount: 1, status: "completed",
+    }))));
+    const restarted = new RemoteRequestCoordinator(storage, () => NOW);
+    // Use the final durable snapshot, as a real restart would.
+    storage.load = async () => stored;
+    await restarted.listRecords();
+    expect(restarted.isBusy()).toBe(false);
+  });
+
+  it("prevents submission when the ledger cannot save and allows later writes for another document", async () => {
+    const memory = memoryStorage();
+    vi.mocked(memory.storage.save).mockRejectedValueOnce(new Error("disk write failed"));
+    const coordinator = new RemoteRequestCoordinator(memory.storage, () => NOW);
+    const operation = vi.fn(async () => "must not submit");
+    await expect(coordinator.run(audit("save-failed"), "gpt-image-2-oai", operation)).rejects.toThrow("disk write failed");
+    expect(operation).not.toHaveBeenCalled();
+    await expect(coordinator.run(audit("next-doc", "doc-b"), "gpt-image-2-oai", async (controls) => {
+      await controls.beforeGenerationPost();
+      return "ok";
+    })).resolves.toBe("ok");
+    expect(memory.value()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ localRequestId: "save-failed", postCount: 0, status: "failed" }),
+      expect.objectContaining({ localRequestId: "next-doc", postCount: 1, status: "completed" }),
+    ]));
   });
 });

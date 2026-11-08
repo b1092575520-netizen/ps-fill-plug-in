@@ -134,7 +134,14 @@ export class AssetLifecycleManager {
     if (existing && existing.uploadedAt >= this.now() - UPLOAD_REUSE_MS) return existing.url;
     const entry = {
       uploadedAt: this.now(),
-      url: upload().catch((error) => {
+      url: upload().then((url) => {
+        // The fallback file lasts one hour, but its signed download URL is
+        // shorter-lived. Share in-flight work only; refresh for the next task.
+        if (new URL(url).hostname === "tmpfiles.org" && this.uploadCache.get(key) === entry) {
+          this.uploadCache.delete(key);
+        }
+        return url;
+      }).catch((error) => {
         if (this.uploadCache.get(key) === entry) this.uploadCache.delete(key);
         throw error;
       }),

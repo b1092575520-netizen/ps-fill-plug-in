@@ -37,7 +37,7 @@ vi.mock("../src/backend/runtime", () => ({
 }));
 
 vi.mock("../src/backend/referenceUploader", () => ({
-  LitterboxReferenceUploader: class {
+  TemporaryReferenceUploader: class {
     upload = host.uploadReference;
   },
 }));
@@ -62,8 +62,8 @@ function Harness({ expose }: { expose: (controller: PrototypeController) => void
   return null;
 }
 
-async function waitFor(predicate: () => boolean, message: string) {
-  for (let attempt = 0; attempt < 160; attempt += 1) {
+async function waitFor(predicate: () => boolean, message: string, attempts = 160) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (predicate()) return;
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
   }
@@ -449,11 +449,11 @@ describe("usePrototypeState paid generation and write recovery", () => {
     act(() => tree.unmount());
   });
 
-  it("blocks rapid double-click, a six-second repeat, and a second document while one POST is active", async () => {
-    let resolveGeneration!: (response: Response) => void;
+  it("blocks rapid double-click and a six-second repeat while allowing a second document", async () => {
+    const resolveGenerations: Array<(response: Response) => void> = [];
     const fetchFn = vi.fn((input: RequestInfo | URL) => {
       if (String(input).endsWith("/v1/images/generations")) {
-        return new Promise<Response>((resolve) => { resolveGeneration = resolve; });
+        return new Promise<Response>((resolve) => { resolveGenerations.push(resolve); });
       }
       return Promise.resolve(new Response(JSON.stringify({ items: [] }), {
         status: 200,
@@ -493,16 +493,16 @@ describe("usePrototypeState paid generation and write recovery", () => {
     await waitFor(() => current.context?.documentId === "doc-second", "second Photoshop context was not activated");
     act(() => current.updateDraft({ prompt: "second document request", model: "gpt-image-2-oai", count: 1 }));
     await act(async () => undefined);
-    expect(current.startGeneration()).toBe(false);
+    expect(current.startGeneration()).toBe(true);
+    await waitFor(() => resolveGenerations.length === 2, "second document did not submit independently");
     expect(fetchFn.mock.calls.filter(([input, init]) => (
       String(input).endsWith("/v1/images/generations") && init?.method === "POST"
-    ))).toHaveLength(1);
+    ))).toHaveLength(2);
 
-    resolveGeneration(new Response(JSON.stringify({ data: [{ b64_json: ONE_PIXEL_PNG }] }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    }));
-    await waitFor(() => host.insert.mock.calls.length === 1, "first document result did not finish writing");
+    resolveGenerations.forEach((resolve) => resolve(new Response(JSON.stringify({ data: [{ b64_json: ONE_PIXEL_PNG }] }), {
+      status: 200, headers: { "content-type": "application/json" },
+    })));
+    await waitFor(() => host.insert.mock.calls.length === 2, "both document results did not finish writing");
     act(() => tree.unmount());
   });
 
@@ -628,6 +628,123 @@ describe("usePrototypeState paid generation and write recovery", () => {
     expect(current.toast?.text).toContain("已在心宝生成好");
     expect(fetchFn.mock.calls.filter(([input]) => String(input).endsWith("/v1/images/generations"))).toHaveLength(1);
     act(() => tree.unmount());
+  });
+
+  it.each(["text", "redraw"] as const)("generates %s in two documents at once and routes out-of-order results to their original documents", async (mode) => {
+    const responses = new Map<string, () => void>();
+    const signals = new Map<string, AbortSignal>();
+    const fetchFn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/v1/images/generations")) {
+        const marker = JSON.parse(String(init?.body)).prompt.endsWith("A result") ? "A" : "B";
+        signals.set(marker, init!.signal!);
+        return new Promise<Response>((resolve) => {
+          responses.set(marker, () => resolve(new Response(JSON.stringify({ data: [{ b64_json: ONE_PIXEL_PNG }] }))));
+        });
+      }
+      return Promise.resolve(new Response(JSON.stringify({ items: [] })));
+    });
+    vi.stubGlobal("fetch", fetchFn);
+    const documentA = { ...host.context, documentId: `doc-concurrent-${mode}-a`, documentName: "a.psd" };
+    const documentB = { ...host.context, documentId: `doc-concurrent-${mode}-b`, documentName: "b.psd" };
+    host.context = documentA;
+    host.openDocumentIds = [documentA.documentId, documentB.documentId];
+    host.captureReference.mockImplementation(async (_scope, documentId) => ({
+      bytes: new Uint8Array(Buffer.from(ONE_PIXEL_PNG, "base64")), mimeType: "image/png", fileName: `${documentId}.png`,
+    }));
+    host.insert.mockReset().mockImplementation(async (_assets, _target, documentId) => {
+      if (host.context.documentId !== documentId) throw new Error("生成期间 Photoshop 当前文档已切换，已拒绝写入");
+      return { documentId, layerIds: [`layer-${documentId}`] };
+    });
+    let current!: PrototypeController;
+    let tree!: ReturnType<typeof create>;
+    await act(async () => { tree = create(<Harness expose={(value) => { current = value; }} />); });
+    try {
+      await waitFor(() => current.context?.documentId === documentA.documentId, "document A was not activated");
+      act(() => current.setSettings({ ...current.settings, apiKey: "test-key", connectionStatus: "connected" }));
+      act(() => current.updateDraft({ mode, prompt: "A result", model: "gpt-image-2-oai", count: 1, outputTarget: "current-document" }));
+      act(() => {
+        expect(current.startGeneration()).toBe(true);
+        expect(current.startGeneration()).toBe(false);
+      });
+      await waitFor(() => responses.has("A"), "A did not submit");
+      host.context = documentB;
+      await waitFor(() => current.context?.documentId === documentB.documentId, "document B was not activated");
+      act(() => current.updateDraft({ mode, prompt: "B result", model: "gpt-image-2-oai", count: 1, outputTarget: "current-document" }));
+      act(() => { expect(current.startGeneration()).toBe(true); });
+      await waitFor(() => responses.size === 2, "B was blocked by A's running request");
+      expect(host.insert).not.toHaveBeenCalled();
+      expect(signals.get("A")?.aborted).toBe(false);
+      if (mode === "redraw") {
+        expect(host.captureReference.mock.calls.map((call) => call[1])).toEqual([documentA.documentId, documentB.documentId]);
+        expect(host.uploadReference).toHaveBeenCalledTimes(2);
+      } else {
+        expect(host.captureReference).not.toHaveBeenCalled();
+      }
+
+      await act(async () => { responses.get("B")!(); });
+      await waitFor(() => host.insert.mock.calls.length === 1 && current.status === "idle", "B did not finish independently");
+      expect(host.insert.mock.calls[0][2]).toBe(documentB.documentId);
+      expect(host.insert.mock.calls[0][0][0].layerName).toBe("Bresult");
+      await act(async () => { responses.get("A")!(); });
+      await waitFor(() => host.insert.mock.calls.length === 2 && Boolean(current.toast?.text.includes("切回")), "A's result was not held for its original document");
+      expect(host.insert.mock.calls[1][2]).toBe(documentA.documentId);
+      expect(current.context?.documentId).toBe(documentB.documentId);
+      host.context = documentA;
+      await waitFor(() => host.insert.mock.calls.length === 3, "returning to A did not restore its own result");
+      expect(host.insert.mock.calls[2][2]).toBe(documentA.documentId);
+      expect(host.insert.mock.calls[2][0][0].layerName).toBe("Aresult");
+      expect(fetchFn.mock.calls.filter(([url]) => String(url).endsWith("/v1/images/generations"))).toHaveLength(2);
+    } finally {
+      act(() => tree.unmount());
+    }
+  });
+
+  it.each(["cancel", "close"] as const)("keeps document A running when document B is %s", async (action) => {
+    const signals = new Map<string, AbortSignal>();
+    let finishA!: () => void;
+    const fetchFn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (!String(input).endsWith("/v1/images/generations")) return Promise.resolve(new Response(JSON.stringify({ items: [] })));
+      const prompt = JSON.parse(String(init?.body)).prompt;
+      signals.set(prompt, init!.signal!);
+      return new Promise<Response>((resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new DOMException("已取消", "AbortError")), { once: true });
+        if (prompt.includes("surviving A")) finishA = () => resolve(new Response(JSON.stringify({ data: [{ b64_json: ONE_PIXEL_PNG }] })));
+      });
+    });
+    vi.stubGlobal("fetch", fetchFn);
+    const documentA = { ...host.context, documentId: `doc-${action}-a`, documentName: "a.psd" };
+    const documentB = { ...host.context, documentId: `doc-${action}-b`, documentName: "b.psd" };
+    host.context = documentA;
+    host.openDocumentIds = [documentA.documentId, documentB.documentId];
+    host.insert.mockReset().mockResolvedValue({ documentId: documentA.documentId, layerIds: ["layer-a"] });
+    let current!: PrototypeController;
+    let tree!: ReturnType<typeof create>;
+    await act(async () => { tree = create(<Harness expose={(value) => { current = value; }} />); });
+    try {
+      await waitFor(() => current.context?.documentId === documentA.documentId, "A was not activated");
+      act(() => current.setSettings({ ...current.settings, apiKey: "test-key", connectionStatus: "connected" }));
+      act(() => current.updateDraft({ mode: "text", prompt: "surviving A", model: "gpt-image-2-oai", count: 1, outputTarget: "current-document" }));
+      act(() => { expect(current.startGeneration()).toBe(true); });
+      await waitFor(() => Boolean(finishA), "A did not submit");
+      host.context = documentB;
+      await waitFor(() => current.context?.documentId === documentB.documentId, "B was not activated");
+      act(() => current.updateDraft({ mode: "text", prompt: "stop B", model: "gpt-image-2-oai", count: 1, outputTarget: "current-document" }));
+      act(() => { expect(current.startGeneration()).toBe(true); });
+      await waitFor(() => signals.size === 2, "both documents did not submit");
+      if (action === "cancel") act(() => current.cancelGeneration());
+      else host.openDocumentIds = [documentA.documentId];
+      host.context = documentA;
+      await waitFor(() => signals.get("创建图片,stop B")?.aborted === true, "B did not stop", 260);
+      await waitFor(() => current.context?.documentId === documentA.documentId, "A was not restored");
+      expect(signals.get("创建图片,surviving A")?.aborted).toBe(false);
+      expect(current.status).toBe("running");
+      await act(async () => { finishA(); });
+      await waitFor(() => host.insert.mock.calls.length === 1 && current.status === "idle", "A was affected by stopping B");
+      expect(host.insert.mock.calls[0][2]).toBe(documentA.documentId);
+      expect(fetchFn.mock.calls.filter(([url]) => String(url).endsWith("/v1/images/generations"))).toHaveLength(2);
+    } finally {
+      act(() => tree.unmount());
+    }
   });
 
   it("places the image automatically once the user returns to the original document", async () => {

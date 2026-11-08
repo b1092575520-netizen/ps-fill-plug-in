@@ -5,6 +5,7 @@ import {
   realGenerationBlocker,
 } from "../src/backend/generationService";
 import type { GenerationDraft, PhotoshopContext } from "../src/types";
+import { TemporaryReferenceUploader } from "../src/backend/referenceUploader";
 
 const draft: GenerationDraft = {
   mode: "text",
@@ -179,6 +180,31 @@ describe("generateFromDraft", () => {
       imageUrls: ["https://temp.example/a.png", "https://temp.example/b.png"],
     }), expect.any(AbortSignal), expect.any(Function));
     expect(stages).toEqual(["uploading", "submitting", "generating"]);
+  });
+
+  it("makes zero generation requests when both temporary upload services fail", async () => {
+    vi.useFakeTimers();
+    try {
+      const provider = { generate: vi.fn(async () => []) };
+      const fetchFn = vi.fn(async () => new Response("unavailable", { status: 503 }));
+      const stages: string[] = [];
+      const failure = expect(generateFromDraft(
+        provider,
+        { ...draft, references: [{
+          id: "reference", name: "a.png", order: 0, url: "blob:a",
+          file: new Blob(["image"], { type: "image/png" }) as File,
+        }] },
+        ["auto", "model"], "key", new AbortController().signal, () => undefined,
+        new TemporaryReferenceUploader(fetchFn), (stage) => stages.push(stage),
+      )).rejects.toThrow(/参考图上传失败.*不扣分/);
+      await vi.runAllTimersAsync();
+      await failure;
+      expect(fetchFn).toHaveBeenCalledTimes(4);
+      expect(provider.generate).not.toHaveBeenCalled();
+      expect(stages).toEqual(["uploading"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reserves reference slots for Photoshop context images", async () => {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { OpenAIImageProvider } from "./backend/provider";
 import { createCredentialStore, createPhotoshopGateway, isUxpRuntime, pickUxpReferenceFiles } from "./backend/runtime";
-import { LitterboxReferenceUploader } from "./backend/referenceUploader";
+import { TemporaryReferenceUploader } from "./backend/referenceUploader";
 import type { GeneratedImageAsset } from "./backend/contracts";
 import {
   GenerationService,
@@ -144,7 +144,7 @@ export function providerConnectionStatus(
 }
 
 const credentialStore = createCredentialStore();
-const referenceUploader = new LitterboxReferenceUploader();
+const referenceUploader = new TemporaryReferenceUploader();
 const UXP_RUNTIME = isUxpRuntime();
 let localRequestSequence = 0;
 let referenceIdSequence = 0;
@@ -1146,8 +1146,8 @@ export function usePrototypeState() {
       notify("已生成图片正在写入 Photoshop，请稍后", "warning");
       return false;
     }
-    if (remoteRequestCoordinator.isBusy()) {
-      notify(remoteRequestCoordinator.busyMessage(), "warning");
+    if (remoteRequestCoordinator.isBusy(documentId)) {
+      notify(remoteRequestCoordinator.busyMessage(documentId), "warning");
       return false;
     }
     if (resources.timer) window.clearInterval(resources.timer);

@@ -3,11 +3,11 @@ import type { GenerationMode } from "./types";
 const STORAGE_KEY = "generative-fill.remote-request-ledger.v1";
 const DATA_FILE_NAME = "remote-request-ledger.v1.json";
 const RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
-// An image task never runs this long; past it the account lock is released
+// An image task never runs this long; past it the document lock is released
 // even if the provider could not be reached to confirm the final status.
 const LOCK_MAX_MS = 20 * 60 * 1000;
 // A request that went out without an answer can never be confirmed. Hold the
-// account briefly so an immediate retry cannot double-charge, then release.
+// document briefly so an immediate retry cannot double-charge, then release.
 const UNCONFIRMED_LOCK_MS = 3 * 60 * 1000;
 const UNRESOLVED_STATUSES: RemoteRequestStatus[] = ["submitting", "running", "downloading", "uncertain"];
 
@@ -27,7 +27,7 @@ export type RemoteRequestStatus =
   | "failed"
   | "uncertain"
   // The provider itself gave up on the task (its upstream link broke): the
-  // outcome will never be known, so the account is not held for it.
+  // outcome will never be known, so the document is not held for it.
   | "unknown";
 
 export interface RemoteRequestAudit {
@@ -168,7 +168,8 @@ export const defaultRemoteRequestStorage: RemoteRequestStorage = {
 export class RemoteRequestCoordinator {
   private records: RemoteRequestRecord[] = [];
   private loaded: Promise<void> | null = null;
-  private activeRequestId: string | null = null;
+  private readonly activeRequestIds = new Map<string, string>();
+  private saveQueue: Promise<void> = Promise.resolve();
   private readonly inFlight = new Map<string, Promise<unknown>>();
   private readonly detachedListeners = new Set<() => void>();
 
@@ -185,8 +186,8 @@ export class RemoteRequestCoordinator {
     await this.ensureLoaded();
     const duplicate = this.inFlight.get(audit.localRequestId) as Promise<T> | undefined;
     if (duplicate) return duplicate;
-    if (this.isBusy()) {
-      throw new Error(this.busyMessage());
+    if (this.isBusy(audit.documentId)) {
+      throw new Error(this.busyMessage(audit.documentId));
     }
     if (this.records.some((record) => record.localRequestId === audit.localRequestId && record.postCount > 0)) {
       throw new Error("该生成请求已经提交过，已阻止重复扣费");
@@ -199,7 +200,7 @@ export class RemoteRequestCoordinator {
       status: "submitting",
     };
     this.records = normalizeRemoteRequestRecords([record, ...this.records], this.now());
-    this.activeRequestId = audit.localRequestId;
+    this.activeRequestIds.set(audit.documentId, audit.localRequestId);
 
     const currentRecord = () => {
       const current = this.records.find((item) => item.localRequestId === audit.localRequestId);
@@ -250,7 +251,7 @@ export class RemoteRequestCoordinator {
         current.status = "uncertain";
         await this.persist();
         // Without a task ID the outcome can never be reconciled; isBusy()
-        // releases the account after UNCONFIRMED_LOCK_MS instead.
+        // releases this document after UNCONFIRMED_LOCK_MS instead.
         if (current.providerTaskId || (error as Error)?.name === "AbortError") throw error;
         const reason = error instanceof Error && error.message ? `（${error.message}）` : "";
         throw new Error(`${UNCONFIRMED_SUBMISSION_MESSAGE}${reason}`);
@@ -328,18 +329,23 @@ export class RemoteRequestCoordinator {
     return record.providerTaskId ? "accepted" : "sent";
   }
 
-  isBusy() {
-    if (this.activeRequestId === null) return false;
-    const active = this.records.find((record) => record.localRequestId === this.activeRequestId);
-    if (!this.inFlight.has(this.activeRequestId) && (!active || !this.withinLock(active))) {
-      this.activeRequestId = null;
-      return false;
+  private blockingRequest(documentId?: string) {
+    for (const [ownerDocumentId, requestId] of this.activeRequestIds) {
+      if (documentId !== undefined && ownerDocumentId !== documentId) continue;
+      const active = this.records.find((record) => record.localRequestId === requestId);
+      if (this.inFlight.has(requestId) || (active && this.withinLock(active))) return requestId;
+      this.activeRequestIds.delete(ownerDocumentId);
     }
-    return true;
+    return undefined;
   }
 
-  busyMessage() {
-    const active = this.records.find((record) => record.localRequestId === this.activeRequestId);
+  isBusy(documentId?: string) {
+    return this.blockingRequest(documentId) !== undefined;
+  }
+
+  busyMessage(documentId?: string) {
+    const requestId = this.blockingRequest(documentId);
+    const active = this.records.find((record) => record.localRequestId === requestId);
     return active && !active.providerTaskId && !this.inFlight.has(active.localRequestId)
       ? UNCONFIRMED_BUSY_MESSAGE
       : BUSY_MESSAGE;
@@ -362,8 +368,11 @@ export class RemoteRequestCoordinator {
         unresolved.forEach((record) => {
           if (!record.providerTaskId) record.status = "uncertain";
         });
-        const lockable = unresolved.find((record) => this.withinLock(record));
-        this.activeRequestId = lockable?.localRequestId ?? null;
+        for (const record of unresolved) {
+          if (this.withinLock(record) && !this.activeRequestIds.has(record.documentId)) {
+            this.activeRequestIds.set(record.documentId, record.localRequestId);
+          }
+        }
       });
     }
     await this.loaded;
@@ -371,11 +380,18 @@ export class RemoteRequestCoordinator {
 
   private persist() {
     this.records = normalizeRemoteRequestRecords(this.records, this.now());
-    return this.storage.save(this.records);
+    const snapshot = this.snapshot();
+    // Generations run in parallel, but the shared ledger file must have one
+    // writer. Capture each revision now and save it in mutation order.
+    const save = this.saveQueue.then(() => this.storage.save(snapshot));
+    this.saveQueue = save.catch(() => undefined);
+    return save;
   }
 
   private release(localRequestId: string) {
-    if (this.activeRequestId === localRequestId) this.activeRequestId = null;
+    for (const [documentId, requestId] of this.activeRequestIds) {
+      if (requestId === localRequestId) this.activeRequestIds.delete(documentId);
+    }
   }
 }
 
